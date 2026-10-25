@@ -12,6 +12,11 @@ const abis = {};
 for (const n of ["LendingPool", "SimpleOracle", "TestToken"]) {
   abis[n] = JSON.parse(read("build", `${n}.json`)).abi;
 }
+// Полные артефакты (abi + bytecode) — чтобы банк можно было развернуть прямо со страницы через MetaMask
+const artifacts = {};
+for (const n of ["LendingPool", "SimpleOracle", "TestToken", "TetherLikeToken"]) {
+  artifacts[n] = JSON.parse(read("build", `${n}.json`));
+}
 
 const depDir = path.join(root, "deployments");
 const deployments = fs.existsSync(depDir)
@@ -20,7 +25,7 @@ const deployments = fs.existsSync(depDir)
 
 const template = read("frontend", "index.html");
 const engines = read("frontend", "sim-engine.js") + "\n" + read("frontend", "chain-engine.js");
-const PLACEHOLDER_CONFIG = "/*__CONFIG__*/ { deployments: [], abis: null }";
+const PLACEHOLDER_CONFIG = "/*__CONFIG__*/ { deployments: [], abis: null, artifacts: null }";
 if (!template.includes(PLACEHOLDER_CONFIG) || !template.includes("/*__ENGINES__*/")) {
   throw new Error("В frontend/index.html нет меток для сборки");
 }
@@ -28,7 +33,7 @@ if (!template.includes(PLACEHOLDER_CONFIG) || !template.includes("/*__ENGINES__*
 function build(deps) {
   return template
     .replace("/*__ENGINES__*/", () => engines)
-    .replace(PLACEHOLDER_CONFIG, () => JSON.stringify({ deployments: deps, abis }));
+    .replace(PLACEHOLDER_CONFIG, () => JSON.stringify({ deployments: deps, abis, artifacts }));
 }
 
 fs.mkdirSync(path.join(root, "dist"), { recursive: true });

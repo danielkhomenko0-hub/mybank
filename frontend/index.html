@@ -338,7 +338,21 @@ footer { margin-top: 28px; font-size: 0.8rem; color: var(--muted); max-width: 70
 /*__ENGINES__*/
 </script>
 <script>
-const CONFIG = /*__CONFIG__*/ { deployments: [], abis: null };
+const CONFIG = /*__CONFIG__*/ { deployments: [], abis: null, artifacts: null };
+// Банки, развёрнутые прямо с этой страницы, запоминаются в браузере
+const SAVED_KEY = "mybank.deployments";
+function loadSaved() {
+  try { return JSON.parse(localStorage.getItem(SAVED_KEY) || "[]"); } catch { return []; }
+}
+function saveDeployment(d) {
+  try {
+    const list = loadSaved().filter((x) => x.pool !== d.pool);
+    localStorage.setItem(SAVED_KEY, JSON.stringify([d, ...list].slice(0, 5)));
+  } catch {}
+}
+for (const d of loadSaved()) {
+  if (!CONFIG.deployments.some((x) => x.pool.toLowerCase() === d.pool.toLowerCase())) CONFIG.deployments.push({ ...d, local: true });
+}
 const { SimBank, computeAccount, borrowRateAt, supplyRateAt, ERRORS_RU, BankError, YEAR, DAY } = window.MyBankSim;
 
 const sim = new SimBank();
@@ -687,19 +701,28 @@ function renderConsole() {
     box.innerHTML = `<p class="note">Библиотека ethers не загрузилась, поэтому режим кошелька недоступен. Демо-режим работает.</p>`;
     return;
   }
+  const deployBox = `
+    <div class="vault">
+      <div class="label">Свой банк в тестовой сети</div>
+      <button class="btn" id="deploy" ${ui.deploying ? "disabled" : ""}>Развернуть банк через MetaMask</button>
+      <p class="note" style="margin:0">${CONFIG.deployments.length ? "Создаст ещё один банк." : "Банк ещё не развёрнут."} Переключите MetaMask на Sepolia: будет ${2 + MyBankSim.MARKET_CONFIG.length * 3} подтверждений, газ — тестовые ETH.</p>
+      ${ui.deployStep ? `<p class="note" style="margin:0" role="status">${esc(ui.deployStep)}</p>` : ""}
+      ${ui.deployJson ? `
+        <p class="note" style="margin:0">Сохраните адреса в файл <code>deployments/${esc(ui.deployNet)}.json</code> в проекте, чтобы банк увидели все:</p>
+        <textarea id="deploy-json" readonly rows="6" style="width:100%;font:12px var(--f-mono);border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--sunk)">${esc(ui.deployJson)}</textarea>
+        <button class="btn" id="copy-json">Скопировать</button>` : ""}
+    </div>`;
   if (!CONFIG.deployments.length) {
-    box.innerHTML = `
-      <p class="note">Контракты банка ещё не развёрнуты. Сначала выполните в папке проекта:</p>
-      <p class="note"><code>RPC_URL=… PRIVATE_KEY=… npm run deploy</code></p>
-      <p class="note">Затем <code>npm run build:web</code> и откройте <code>dist/index.html</code> через <code>npx serve dist</code> в браузере с MetaMask.</p>`;
+    box.innerHTML = deployBox;
     return;
   }
   if (!chain) {
     box.innerHTML = `
       <label class="label" for="net">Сеть</label>
-      <select id="net">${CONFIG.deployments.map((d, i) => `<option value="${i}" ${i === ui.net ? "selected" : ""}>${esc(d.network)} · chainId ${d.chainId}</option>`).join("")}</select>
+      <select id="net">${CONFIG.deployments.map((d, i) => `<option value="${i}" ${i === ui.net ? "selected" : ""}>${esc(d.network)} · chainId ${d.chainId}${d.local ? " · создан здесь" : ""}</option>`).join("")}</select>
       <button class="go" id="connect">Подключить MetaMask</button>
-      <p class="note" style="margin:0">Нужен кошелёк только с тестовыми ETH. Встроенное превью не видит расширения браузера — откройте страницу отдельно.</p>`;
+      <p class="note" style="margin:0">Нужен кошелёк только с тестовыми ETH. Встроенное превью не видит расширения браузера — откройте страницу отдельно.</p>
+      ${deployBox}`;
     return;
   }
   const d = CONFIG.deployments[ui.net];
@@ -717,7 +740,8 @@ function renderConsole() {
             ${d.assets.map((a) => `<button class="btn" data-reserves="${a.symbol}">Вывести резервы ${a.symbol}</button>`).join("")}
           </div>`
         : ""
-    }`;
+    }
+    ${ui.deployJson ? deployBox : ""}`;
 }
 
 async function guarded(fn) {
@@ -785,6 +809,35 @@ document.addEventListener("click", async (ev) => {
   if (t.id === "reserves") {
     try { for (const m of state.markets) if (m.reserves > 1e-9) sim.withdrawReserves(m.symbol); } catch (e) { setStatus(e.message, "err"); }
     return refresh();
+  }
+  if (t.id === "deploy") {
+    if (!window.ethereum) { setStatus("Кошелёк не найден. Установите MetaMask и откройте страницу в обычном браузере.", "err"); return; }
+    ui.deploying = true; ui.deployJson = ""; ui.deployStep = "Подключаю кошелёк…"; renderConsole();
+    try {
+      await window.ethereum.request({ method: "eth_requestAccounts" });
+      const signer = await new ethers.BrowserProvider(window.ethereum).getSigner();
+      const dep = await MyBankChain.deployBank({
+        ethers: window.ethers, signer, artifacts: CONFIG.artifacts,
+        onStep: (text, done, total) => { ui.deployStep = done < total ? `Шаг ${done + 1} из ${total}: ${text} — подтвердите в MetaMask` : "Банк развёрнут."; renderConsole(); },
+      });
+      saveDeployment(dep);
+      CONFIG.deployments.unshift({ ...dep, local: true });
+      ui.net = 0;
+      ui.deployNet = dep.network;
+      ui.deployJson = JSON.stringify(dep, null, 2);
+      chain = await MyBankChain.ChainBank.connectBrowser({ ethers: window.ethers, deployment: dep, abis: CONFIG.abis });
+      setStatus("Банк развёрнут и подключён.", "ok");
+    } catch (e) {
+      ui.deployStep = "";
+      setStatus(e.message || String(e), "err");
+    }
+    ui.deploying = false;
+    return refresh();
+  }
+  if (t.id === "copy-json") {
+    try { await navigator.clipboard.writeText(ui.deployJson); setStatus("Скопировано.", "ok"); }
+    catch { $("deploy-json").select(); setStatus("Выделено — нажмите Cmd+C."); }
+    return;
   }
   if (t.id === "connect") {
     ui.net = Number($("net").value);

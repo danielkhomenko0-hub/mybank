@@ -142,3 +142,32 @@ test("кошелёк: подключение и вклад через насто
   assert.equal(collateral() - before, 2000); // +1 ETH залога по $2000
   w.close();
 });
+
+test("кошелёк: банк разворачивается кнопкой на странице и сразу подключается", async () => {
+  const { ethers } = require("ethers");
+  const ganache = require("ganache");
+  const chain = ganache.provider({ logging: { quiet: true }, chain: { hardfork: "merge", chainId: 11155111 }, wallet: { totalAccounts: 1 } });
+  // Ganache занижает оценку газа для вложенных вызовов — даём запас, как в helpers.js
+  const ethereum = {
+    request: async (args) => {
+      if (args.method === "eth_estimateGas") { await chain.request(args); return "0x2dc6c0"; }
+      if (args.method === "eth_requestAccounts") return chain.request({ method: "eth_accounts", params: [] });
+      return chain.request(args);
+    },
+    on: () => {},
+  };
+  const { w, d } = load({ ethers, ethereum });
+  await tick();
+  click(w, d.getElementById("mode-wallet"));
+  await tick();
+  click(w, d.getElementById("deploy"));
+  for (let i = 0; i < 400 && !/развёрнут и подключён|Деплой|не/.test(text(d, "status")); i++) await tick(50);
+  assert.match(text(d, "status"), /Банк развёрнут и подключён/);
+  for (let i = 0; i < 100 && !d.getElementById("deploy-json"); i++) await tick(50); // ждём, пока подтянется состояние
+  const json = JSON.parse(d.getElementById("deploy-json").value);
+  assert.equal(json.network, "sepolia");
+  assert.equal(json.assets.length, 3);
+  assert.ok(d.querySelector('[data-faucet="USDT"]'), "кран USDT");
+  assert.match(text(d, "console"), /Вы владелец банка/);
+  w.close();
+});

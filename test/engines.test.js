@@ -6,7 +6,7 @@ const { ethers } = require("ethers");
 const { setup, send, deploy } = require("./helpers");
 
 const Sim = require("../frontend/sim-engine.js");
-const { ChainBank } = require("../frontend/chain-engine.js");
+const { ChainBank, deployBank } = require("../frontend/chain-engine.js");
 const { SimBank, YEAR } = Sim;
 
 const close = (a, b, eps, label) => assert.ok(Math.abs(a - b) <= eps, `${label}: ожидалось ≈${b}, получено ${a}`);
@@ -140,4 +140,29 @@ test("блокчейн-движок: USDT требует обнулить раз
   const s = await bank.getState();
   close(s.markets.find((m) => m.symbol === "USDT").deposited, 500, 1e-9, "вклад USDT");
   assert.ok(bank.log.some((e) => e.text.includes("Сброс разрешения USDT")));
+});
+
+test("деплой со страницы: deployBank разворачивает банк, и он сразу работает", async () => {
+  const { owner, alice } = await setup();
+  const artifacts = Object.fromEntries(
+    ["LendingPool", "SimpleOracle", "TestToken", "TetherLikeToken"].map((n) => [n, require(path.join(__dirname, "..", "build", `${n}.json`))])
+  );
+  const steps = [];
+  const dep = await deployBank({ ethers, signer: owner, artifacts, onStep: (t, d, n) => steps.push([t, d, n]) });
+  assert.deepEqual(dep.assets.map((a) => a.symbol), ["USDC", "USDT", "WETH"]);
+  assert.equal(steps.at(-1)[1], 11);
+  assert.equal(dep.owner, await owner.getAddress());
+
+  const abis = Object.fromEntries(Object.entries(artifacts).map(([k, v]) => [k, v.abi]));
+  const bank = new ChainBank({ ethers, signer: alice, deployment: dep, abis });
+  await bank.faucet("WETH");
+  await bank.faucet("USDC");
+  await bank.deposit("USDC", "5000");
+  await bank.deposit("WETH", "1");
+  await bank.borrow("USDC", "1000");
+  const s = await bank.getState();
+  const u = s.markets.find((m) => m.symbol === "USDC");
+  close(u.borrowed, 1000, 1e-6, "кредит");
+  assert.equal(s.markets.find((m) => m.symbol === "USDT").ltv, 0.75);
+  assert.equal(s.markets.find((m) => m.symbol === "WETH").price, 2000);
 });

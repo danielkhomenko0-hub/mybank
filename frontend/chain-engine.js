@@ -7,6 +7,83 @@
 
   const FAUCET = { USDC: "10000", USDT: "10000", WETH: "5" };
 
+  // Какой контракт разворачивать для каждого тестового токена
+  const TOKEN_CONTRACT = { USDT: "TetherLikeToken" };
+  const NETWORK_NAMES = { 1: "mainnet", 11155111: "sepolia", 1337: "localhost", 31337: "localhost" };
+
+  /**
+   * Разворачивает весь банк с кошелька пользователя (каждая транзакция подтверждается в MetaMask).
+   * Параметры рынков берутся из симулятора, чтобы демо и сеть совпадали.
+   * @param {object} p
+   * @param {object} p.ethers
+   * @param {object} p.signer
+   * @param {object} p.artifacts { LendingPool, SimpleOracle, TestToken, TetherLikeToken } — { abi, bytecode }
+   * @param {(step: string, done: number, total: number) => void} [p.onStep]
+   * @returns {Promise<object>} то же, что пишет scripts/deploy.js в deployments/<сеть>.json
+   */
+  async function deployBank({ ethers, signer, artifacts, onStep = () => {} }) {
+    const provider = signer.provider;
+    const { chainId } = await provider.getNetwork();
+    if (chainId === 1n) throw new BankError("Mainnet", "Это основная сеть Ethereum. Прототип можно разворачивать только в тестовой сети.");
+    const owner = await signer.getAddress();
+    if ((await provider.getBalance(owner)) === 0n) {
+      throw new BankError("NoGas", "На кошельке 0 ETH в этой сети. Возьмите тестовые ETH в Sepolia faucet.");
+    }
+    const markets = Sim.MARKET_CONFIG;
+    const total = 2 + markets.length * 3;
+    let done = 0;
+    const step = (text) => onStep(text, done, total);
+    const wad = (n) => ethers.parseUnits(String(n), 18);
+    const bps = (x) => Math.round(x * 10_000);
+    const deployOne = async (name, args, label) => {
+      step(label);
+      const { abi, bytecode } = artifacts[name];
+      const c = await new ethers.ContractFactory(abi, bytecode, signer).deploy(...args);
+      await c.waitForDeployment();
+      done++;
+      return c;
+    };
+    const sendTx = async (label, fn) => {
+      step(label);
+      await (await fn()).wait();
+      done++;
+    };
+
+    try {
+      const deployBlock = await provider.getBlockNumber();
+      const oracle = await deployOne("SimpleOracle", [], "Оракул цен");
+      const pool = await deployOne("LendingPool", [await oracle.getAddress()], "Кредитный пул");
+      const assets = [];
+      for (const m of markets) {
+        const token = await deployOne(TOKEN_CONTRACT[m.symbol] || "TestToken", [`MyBank Test ${m.symbol}`, m.symbol, m.decimals], `Тестовый токен ${m.symbol}`);
+        const addr = await token.getAddress();
+        await sendTx(`Цена ${m.symbol}: $${m.price}`, () => oracle.setPrice(addr, wad(m.price)));
+        await sendTx(`Открытие рынка ${m.symbol}`, () =>
+          pool.listMarket(addr, bps(m.ltv), bps(m.lt), bps(m.bonus), bps(m.rf), {
+            baseRate: wad(m.rate.base), slope1: wad(m.rate.s1), slope2: wad(m.rate.s2), kink: wad(m.rate.kink),
+          })
+        );
+        assets.push({ symbol: m.symbol, address: addr, decimals: m.decimals });
+      }
+      onStep("Готово", total, total);
+      return {
+        network: NETWORK_NAMES[Number(chainId)] || `chain-${chainId}`,
+        chainId: Number(chainId),
+        deployedAt: new Date().toISOString(),
+        deployBlock,
+        owner,
+        pool: await pool.getAddress(),
+        oracle: await oracle.getAddress(),
+        assets,
+      };
+    } catch (e) {
+      if (e && (e.code === "ACTION_REJECTED" || e.code === 4001)) {
+        throw new BankError("Rejected", `Вы отклонили транзакцию в кошельке (шаг ${done + 1} из ${total}). Деплой остановлен.`);
+      }
+      throw e instanceof BankError ? e : new BankError("DeployFailed", "Деплой не прошёл: " + (e?.shortMessage || e?.message || e));
+    }
+  }
+
   class ChainBank {
     /**
      * @param {object} p
@@ -254,7 +331,7 @@
     }
   }
 
-  const api = { ChainBank, FAUCET };
+  const api = { ChainBank, FAUCET, deployBank };
   root.MyBankChain = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);
