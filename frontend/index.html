@@ -1,0 +1,835 @@
+<title>MyBank Lending Desk</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Макет: «стол операциониста» — слева счёт и рынки банка, справа бланк операции, пульт и журнал. */
+:root {
+  --paper: #edf1ed;
+  --surface: #fafcfa;
+  --sunk: #e3e9e4;
+  --ink: #14211c;
+  --muted: #56675f;
+  --line: #d2dbd4;
+  --accent: #0c6a51;
+  --accent-ink: #f4fbf8;
+  --accent-soft: #d6ebe2;
+  --brass: #94701f;
+  --good: #1d8656;
+  --warn: #b0731a;
+  --crit: #bf3f2b;
+  --good-soft: #dcefe4;
+  --warn-soft: #f5e8d2;
+  --crit-soft: #f6dcd6;
+  --f-display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --r: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0d1412; --surface: #141e1b; --sunk: #0f1815; --ink: #e2ebe6; --muted: #8ea198;
+    --line: #25332e; --accent: #3fc398; --accent-ink: #062018; --accent-soft: #173a30; --brass: #d4ac58;
+    --good: #4ccd8b; --warn: #e2a648; --crit: #ef765f; --good-soft: #15342a; --warn-soft: #3a2d15; --crit-soft: #3d1d17;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0d1412; --surface: #141e1b; --sunk: #0f1815; --ink: #e2ebe6; --muted: #8ea198;
+  --line: #25332e; --accent: #3fc398; --accent-ink: #062018; --accent-soft: #173a30; --brass: #d4ac58;
+  --good: #4ccd8b; --warn: #e2a648; --crit: #ef765f; --good-soft: #15342a; --warn-soft: #3a2d15; --crit-soft: #3d1d17;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font: 15px/1.5 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 40px;
+}
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; }
+h2 { font-size: 1.05rem; font-weight: 600; letter-spacing: 0.01em; }
+.num, td, .mono { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--f-mono); }
+.label {
+  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 500;
+}
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.wrap { max-width: 1240px; margin: 0 auto; }
+
+/* ---------- шапка */
+.top {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px;
+  padding-block: 18px 16px; border-bottom: 1px solid var(--line); margin-bottom: 20px;
+}
+.brand { display: flex; align-items: center; gap: 10px; margin-right: auto; }
+.brand svg { flex: none; }
+.brand h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.01em; }
+.brand small { display: block; color: var(--muted); font-size: 0.78rem; font-family: var(--f-body); font-weight: 400; }
+.seg { display: inline-flex; background: var(--sunk); border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+.seg button {
+  border: 0; background: transparent; padding: 6px 14px; border-radius: 999px; cursor: pointer; font-weight: 500; font-size: 0.88rem;
+  color: var(--muted);
+}
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
+.who { font-size: 0.85rem; color: var(--muted); }
+.who b { color: var(--ink); font-weight: 600; }
+
+/* ---------- раскладка */
+.desk { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; align-items: start; }
+.col { display: grid; gap: 20px; min-width: 0; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 18px; min-width: 0; }
+.panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.hint { color: var(--muted); font-size: 0.85rem; }
+@media (max-width: 980px) {
+  /* На узком экране бланк операции и пульт идут сразу после счёта */
+  .desk { grid-template-columns: minmax(0, 1fr); }
+  .col { display: contents; }
+  .o-account { order: 1; } .o-slip { order: 2; } .o-markets { order: 3; } .o-console { order: 4; }
+  .o-curve { order: 5; } .o-clients { order: 6; } .o-journal { order: 7; }
+}
+
+/* ---------- счёт */
+.account { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; align-items: center; }
+.gauge { text-align: center; }
+.gauge svg { width: 100%; max-width: 220px; height: auto; display: block; margin: 0 auto; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 600;
+}
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.good { background: var(--good-soft); color: var(--good); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.crit { background: var(--crit-soft); color: var(--crit); }
+.figures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px; }
+.fig .v { font-family: var(--f-display); font-size: 1.45rem; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.limit { grid-column: 1 / -1; }
+.bar { position: relative; height: 10px; background: var(--sunk); border-radius: 999px; overflow: visible; margin-top: 8px; }
+.bar > i { position: absolute; inset: 0 auto 0 0; border-radius: 999px; background: var(--accent); transition: width 0.3s ease; }
+.bar > b { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--ink); opacity: 0.55; }
+.bar-legend { display: flex; justify-content: space-between; gap: 8px; font-size: 0.78rem; color: var(--muted); margin-top: 6px; flex-wrap: wrap; }
+@media (max-width: 600px) {
+  .account { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------- рынки */
+.table-wrap { overflow-x: auto; margin: 0 -18px; padding: 0 18px; }
+table { width: 100%; border-collapse: collapse; min-width: 640px; }
+th { text-align: right; font-weight: 500; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+td { text-align: right; padding: 12px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th:first-child, td:first-child { text-align: left; }
+tbody tr { cursor: pointer; }
+tbody tr:hover td { background: var(--sunk); }
+tbody tr[aria-selected="true"] td { background: var(--accent-soft); }
+.asset { display: flex; align-items: center; gap: 10px; }
+.coin {
+  width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-family: var(--f-display); font-weight: 700; font-size: 0.8rem;
+  background: var(--accent-soft); color: var(--accent); flex: none;
+}
+.coin.weth { background: var(--sunk); color: var(--brass); border: 1px solid var(--line); }
+.coin.usdt { background: var(--good-soft); color: var(--good); }
+.asset small { display: block; color: var(--muted); font-size: 0.75rem; }
+.rate-up { color: var(--good); font-weight: 600; }
+.rate-down { color: var(--crit); font-weight: 600; }
+.util { display: grid; gap: 4px; justify-items: end; }
+.util .bar { width: 92px; height: 6px; margin: 0; }
+.util .bar > b { top: -3px; bottom: -3px; width: 1px; }
+.zero { color: var(--muted); }
+
+/* ---------- кривая ставки */
+.curve svg { width: 100%; height: auto; display: block; }
+.curve text { fill: var(--muted); font: 11px var(--f-mono); }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.82rem; color: var(--muted); margin-top: 8px; }
+.legend span::before { content: ""; display: inline-block; width: 16px; height: 0; border-top: 2px solid var(--accent); vertical-align: middle; margin-right: 6px; }
+.legend .sup::before { border-top: 2px dashed var(--brass); }
+.chips { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.chip {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 4px 12px; cursor: pointer; font-size: 0.85rem; font-weight: 500;
+}
+.chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+/* ---------- клиенты */
+.clients { display: grid; gap: 8px; }
+.client { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.9rem; flex-wrap: wrap; }
+.client .num { color: var(--muted); }
+
+/* ---------- бланк операции */
+.slip { border-color: var(--accent); }
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-bottom: 14px; }
+.tabs button { border: 0; border-right: 1px solid var(--line); background: var(--sunk); padding: 8px 4px; cursor: pointer; font-weight: 500; font-size: 0.88rem; color: var(--muted); }
+.tabs button:last-child { border-right: 0; }
+.tabs button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: inset 0 -2px 0 var(--accent); }
+.field { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; margin-bottom: 12px; }
+.amount { display: flex; align-items: stretch; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.amount:focus-within { border-color: var(--accent); }
+.amount input {
+  flex: 1; min-width: 0; width: 100%; border: 0; background: transparent; padding: 10px 12px; font-family: var(--f-display); font-size: 1.3rem; font-weight: 600;
+  font-variant-numeric: tabular-nums; outline: none;
+}
+.amount .sym { align-self: center; color: var(--muted); font-weight: 600; padding-right: 8px; }
+.amount button { border: 0; border-left: 1px solid var(--line); background: var(--sunk); padding: 0 12px; cursor: pointer; font-weight: 600; font-size: 0.8rem; border-radius: 0 7px 7px 0; }
+.avail { font-size: 0.8rem; color: var(--muted); }
+.preview { display: grid; gap: 6px; background: var(--sunk); border-radius: 8px; padding: 10px 12px; font-size: 0.86rem; margin-bottom: 12px; }
+.preview div { display: flex; justify-content: space-between; gap: 10px; }
+.preview span:last-child { font-variant-numeric: tabular-nums; font-weight: 500; text-align: right; }
+.go {
+  width: 100%; border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-ink); padding: 12px; font-weight: 600; font-size: 1rem; cursor: pointer;
+}
+.go:disabled { opacity: 0.55; cursor: not-allowed; }
+.status { min-height: 1.4em; font-size: 0.85rem; margin-top: 10px; }
+.status.err { color: var(--crit); }
+.status.ok { color: var(--good); }
+
+/* ---------- пульт */
+.console { display: grid; gap: 16px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 7px 12px; cursor: pointer; font-weight: 500; font-size: 0.86rem;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.alert { border-color: var(--crit); color: var(--crit); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.slider { display: grid; gap: 4px; }
+.slider-head { display: flex; justify-content: space-between; align-items: baseline; }
+.slider-head output { font-family: var(--f-display); font-weight: 600; font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+.ticks { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--muted); font-family: var(--f-mono); }
+.vault { border-top: 1px dashed var(--line); padding-top: 14px; display: grid; gap: 8px; }
+.vault .v { font-family: var(--f-display); font-size: 1.3rem; font-weight: 600; color: var(--brass); font-variant-numeric: tabular-nums; }
+.kv { display: flex; justify-content: space-between; gap: 10px; font-size: 0.86rem; }
+.kv span:last-child { font-variant-numeric: tabular-nums; }
+.note { font-size: 0.84rem; color: var(--muted); }
+.note code { font-family: var(--f-mono); font-size: 0.8rem; background: var(--sunk); padding: 1px 5px; border-radius: 4px; word-break: break-all; }
+select { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; background: var(--surface); }
+
+/* ---------- журнал */
+.journal ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; max-height: 360px; overflow-y: auto; }
+.journal li { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 8px; font-size: 0.86rem; }
+.journal .when { font-family: var(--f-mono); font-size: 0.75rem; color: var(--muted); padding-top: 2px; }
+.journal .txt { border-left: 2px solid var(--line); padding-left: 10px; overflow-wrap: anywhere; }
+.journal .alert .txt { border-color: var(--crit); }
+.journal .price .txt { border-color: var(--warn); }
+.journal .bank .txt { border-color: var(--brass); }
+.journal .time .txt { border-color: var(--accent); color: var(--muted); }
+.journal a { color: var(--accent); }
+
+footer { margin-top: 28px; font-size: 0.8rem; color: var(--muted); max-width: 70ch; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true">
+        <rect x="1" y="1" width="32" height="32" rx="8" fill="var(--accent)"></rect>
+        <path d="M8 26V13l9-5 9 5v13" fill="none" stroke="var(--accent-ink)" stroke-width="2"></path>
+        <path d="M12 26v-8M17 26v-8M22 26v-8M7 26h20" stroke="var(--accent-ink)" stroke-width="2"></path>
+      </svg>
+      <div>
+        <h1>MyBank</h1>
+        <small>Кредитный пул · прототип</small>
+      </div>
+    </div>
+    <div class="seg" role="group" aria-label="Режим">
+      <button id="mode-demo" aria-pressed="true">Демо</button>
+      <button id="mode-wallet" aria-pressed="false">Кошелёк</button>
+    </div>
+    <div class="who" id="who"></div>
+  </header>
+
+  <main class="desk">
+    <div class="col">
+      <section class="panel o-account" aria-labelledby="h-account">
+        <div class="panel-head">
+          <h2 id="h-account">Ваш счёт</h2>
+          <span class="hint">Health factor ниже 1.00 — залог можно ликвидировать</span>
+        </div>
+        <div class="account">
+          <div class="gauge" id="gauge"></div>
+          <div class="figures" id="figures"></div>
+        </div>
+      </section>
+
+      <section class="panel o-markets" aria-labelledby="h-markets">
+        <div class="panel-head">
+          <h2 id="h-markets">Рынки банка</h2>
+          <span class="hint">Нажмите на строку, чтобы выбрать актив</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Актив</th><th>Цена</th><th>Вклад, год.</th><th>Кредит, год.</th><th>Загрузка</th>
+                <th>Ваш вклад</th><th>Ваш кредит</th><th>Кошелёк</th>
+              </tr>
+            </thead>
+            <tbody id="markets"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel curve o-curve" aria-labelledby="h-curve">
+        <div class="panel-head">
+          <h2 id="h-curve">Как банк назначает ставку</h2>
+          <div class="chips" id="curve-chips"></div>
+        </div>
+        <p class="hint" id="curve-text" style="margin:0 0 10px"></p>
+        <div id="curve"></div>
+        <div class="legend"><span>Кредит</span><span class="sup">Вклад</span></div>
+      </section>
+
+      <section class="panel o-clients" aria-labelledby="h-clients" id="clients-panel">
+        <div class="panel-head">
+          <h2 id="h-clients">Другие клиенты</h2>
+          <span class="hint">Их счета тоже зависят от цены ETH</span>
+        </div>
+        <div class="clients" id="clients"></div>
+      </section>
+    </div>
+
+    <aside class="col">
+      <section class="panel slip o-slip" aria-labelledby="h-slip">
+        <div class="panel-head"><h2 id="h-slip">Операция</h2><div class="chips" id="slip-chips"></div></div>
+        <div class="tabs" role="group" aria-label="Тип операции">
+          <button data-action="deposit" aria-pressed="true">Вклад</button>
+          <button data-action="withdraw" aria-pressed="false">Снять</button>
+          <button data-action="borrow" aria-pressed="false">Кредит</button>
+          <button data-action="repay" aria-pressed="false">Погасить</button>
+        </div>
+        <div class="field">
+          <label class="label" for="amount">Сумма</label>
+          <div class="amount">
+            <input id="amount" inputmode="decimal" autocomplete="off" placeholder="0">
+            <span class="sym" id="amount-sym">USDC</span>
+            <button id="max" type="button">Макс</button>
+          </div>
+          <div class="avail" id="avail"></div>
+        </div>
+        <div class="preview" id="preview"></div>
+        <button class="go" id="go">Положить</button>
+        <div class="status" id="status" role="status" aria-live="polite"></div>
+      </section>
+
+      <section class="panel o-console" aria-labelledby="h-console">
+        <div class="panel-head"><h2 id="h-console">Пульт</h2><span class="hint" id="console-hint"></span></div>
+        <div class="console" id="console"></div>
+      </section>
+
+      <section class="panel journal o-journal" aria-labelledby="h-journal">
+        <div class="panel-head"><h2 id="h-journal">Журнал операций</h2></div>
+        <ol id="journal"></ol>
+      </section>
+    </aside>
+  </main>
+
+  <footer>
+    Учебный прототип децентрализованного банка. В демо-режиме всё считается у вас в браузере по тем же формулам,
+    что и в смарт-контракте LendingPool. В режиме «Кошелёк» используются тестовые токены в сети Sepolia — реальные деньги не участвуют.
+  </footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+<script>
+/*__ENGINES__*/
+</script>
+<script>
+const CONFIG = /*__CONFIG__*/ { deployments: [], abis: null };
+const { SimBank, computeAccount, borrowRateAt, supplyRateAt, ERRORS_RU, BankError, YEAR, DAY } = window.MyBankSim;
+
+const sim = new SimBank();
+let mode = "demo";
+let chain = null;
+let state = null;
+const ui = { action: "deposit", sym: "USDC", curveSym: "USDC", maxToken: null, busy: false, net: 0 };
+const $ = (id) => document.getElementById(id);
+
+// ---------------------------------------------------------------- форматирование
+const DIG = { USDC: 2, USDT: 2, WETH: 4 };
+const COIN = { USDC: "$", USDT: "₮", WETH: "Ξ" };
+const money = (n) =>
+  "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const amt = (n, sym, max = DIG[sym] ?? 2) =>
+  Number(n).toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: max });
+const pct = (r, d = 2) => (r * 100).toLocaleString("ru-RU", { minimumFractionDigits: d, maximumFractionDigits: d }) + "%";
+const hfText = (hf) => (hf === Infinity ? "∞" : hf.toFixed(2));
+const hfClass = (hf) => (hf < 1 ? "crit" : hf < 1.5 ? "warn" : "good");
+const hfWord = (hf) =>
+  hf === Infinity ? "Долга нет" : hf < 1 ? "Под ликвидацией" : hf < 1.5 ? "Близко к порогу" : "Безопасно";
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const floorTo = (n, d) => Math.floor(n * 10 ** d) / 10 ** d;
+const market = (sym) => state.markets.find((m) => m.symbol === sym);
+
+// ---------------------------------------------------------------- данные
+async function refresh() {
+  try {
+    state = mode === "demo" ? sim.getState("you") : chain ? await chain.getState() : null;
+  } catch (e) {
+    setStatus("Не удалось прочитать данные: " + (e.message || e), "err");
+  }
+  render();
+}
+
+// ---------------------------------------------------------------- отрисовка
+function render() {
+  $("mode-demo").setAttribute("aria-pressed", String(mode === "demo"));
+  $("mode-wallet").setAttribute("aria-pressed", String(mode === "wallet"));
+  renderConsole();
+  if (!state) {
+    $("who").innerHTML = "Кошелёк не подключён";
+    for (const id of ["gauge", "figures", "markets", "curve", "clients", "journal", "preview", "avail"]) $(id).innerHTML = "";
+    $("figures").innerHTML = '<p class="hint" style="grid-column:1/-1">Подключите кошелёк на пульте справа — здесь появятся ваш залог, долг и лимит.</p>';
+    $("go").disabled = true;
+    $("clients-panel").hidden = true;
+    return;
+  }
+  $("who").innerHTML =
+    mode === "demo"
+      ? `Клиент: <b>${esc(state.userLabel)}</b> · день <b>${state.day}</b>`
+      : `<b class="mono">${esc(state.userLabel)}</b> · ${esc(state.network)}`;
+  renderAccount();
+  renderMarkets();
+  renderCurve();
+  renderClients();
+  renderSlip();
+  renderJournal();
+}
+
+function renderAccount() {
+  const a = state.account;
+  // Полукруглая шкала health factor от 0 до 3
+  const W = 220, H = 128, cx = 110, cy = 112, R = 92;
+  const ang = (v) => Math.PI * (1 - Math.min(v, 3) / 3);
+  const pt = (v, r = R) => [cx + r * Math.cos(ang(v)), cy - r * Math.sin(ang(v))];
+  const arc = (from, to, color) => {
+    const [x1, y1] = pt(from), [x2, y2] = pt(to);
+    return `<path d="M${x1} ${y1} A${R} ${R} 0 0 1 ${x2} ${y2}" stroke="${color}" stroke-width="12" fill="none"></path>`;
+  };
+  const hf = a.healthFactor;
+  const needle = pt(hf === Infinity ? 3 : hf, R - 22);
+  const ticks = [0, 1, 1.5, 2, 3]
+    .map((v) => {
+      const [x, y] = pt(v, R - 18);
+      const [lx, ly] = pt(v, R + 14);
+      const [ix, iy] = pt(v, R + 6);
+      return `<line x1="${x}" y1="${y}" x2="${ix}" y2="${iy}" stroke="var(--muted)" stroke-width="1"></line>
+              <text x="${lx}" y="${ly + 4}" text-anchor="middle" font-size="10" fill="var(--muted)" font-family="var(--f-mono)">${v === 3 ? "3+" : v}</text>`;
+    })
+    .join("");
+  $("gauge").innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Health factor ${hfText(hf)}">
+      ${arc(0, 1, "var(--crit)")}${arc(1, 1.5, "var(--warn)")}${arc(1.5, 3, "var(--good)")}
+      ${ticks}
+      <line x1="${cx}" y1="${cy}" x2="${needle[0]}" y2="${needle[1]}" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"></line>
+      <circle cx="${cx}" cy="${cy}" r="6" fill="var(--ink)"></circle>
+    </svg>
+    <div style="font-family:var(--f-display);font-size:2rem;font-weight:700;line-height:1;margin-top:4px" class="num">${hfText(hf)}</div>
+    <div style="margin-top:6px"><span class="pill ${hf === Infinity ? "good" : hfClass(hf)}">${hfWord(hf)}</span></div>`;
+
+  const used = a.borrowLimit > 0 ? a.debtValue / a.borrowLimit : 0;
+  const scale = Math.max(a.liquidationLimit, a.debtValue, 1);
+  const free = Math.max(0, a.borrowLimit - a.debtValue);
+  $("figures").innerHTML = `
+    <div class="fig"><div class="label">Залог</div><div class="v">${money(a.collateralValue)}</div></div>
+    <div class="fig"><div class="label">Долг</div><div class="v">${money(a.debtValue)}</div></div>
+    <div class="fig"><div class="label">Лимит кредита</div><div class="v">${money(a.borrowLimit)}</div></div>
+    <div class="fig"><div class="label">Можно ещё занять</div><div class="v">${money(free)}</div></div>
+    <div class="limit">
+      <div class="label">Использовано ${pct(used, 0)} лимита</div>
+      <div class="bar" aria-hidden="true">
+        <i style="width:${Math.min(100, (a.debtValue / scale) * 100)}%;background:var(--${a.debtValue > 0 ? hfClass(hf) : "accent"})"></i>
+        ${a.borrowLimit > 0 ? `<b style="left:${(a.borrowLimit / scale) * 100}%"></b>` : ""}
+      </div>
+      <div class="bar-legend"><span>Долг ${money(a.debtValue)}</span><span>Лимит ${money(a.borrowLimit)}</span><span>Порог ликвидации ${money(a.liquidationLimit)}</span></div>
+    </div>`;
+}
+
+function renderMarkets() {
+  $("markets").innerHTML = state.markets
+    .map(
+      (m) => `
+    <tr data-sym="${m.symbol}" aria-selected="${m.symbol === ui.sym}" tabindex="0">
+      <td><div class="asset"><span class="coin ${m.symbol.toLowerCase()}">${COIN[m.symbol] || m.symbol[0]}</span>
+        <div><b>${m.symbol}</b><small>LTV ${pct(m.ltv, 0)} · порог ${pct(m.lt, 0)}</small></div></div></td>
+      <td>${money(m.price)}</td>
+      <td class="rate-up">${pct(m.supplyRate)}</td>
+      <td class="rate-down">${pct(m.borrowRate)}</td>
+      <td><div class="util"><span>${pct(m.utilization, 1)}</span>
+        <div class="bar"><i style="width:${m.utilization * 100}%;background:var(--${m.utilization > m.rate.kink ? "warn" : "accent"})"></i><b style="left:${m.rate.kink * 100}%"></b></div></div></td>
+      <td class="${m.deposited ? "" : "zero"}">${amt(m.deposited, m.symbol)}</td>
+      <td class="${m.borrowed ? "" : "zero"}">${amt(m.borrowed, m.symbol)}</td>
+      <td>${amt(m.wallet, m.symbol)}</td>
+    </tr>`
+    )
+    .join("");
+}
+
+function niceMax(v) {
+  const steps = [0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 4, 5];
+  return steps.find((s) => s >= v) ?? Math.ceil(v);
+}
+
+function renderCurve() {
+  $("curve-chips").innerHTML = state.markets
+    .map((m) => `<button class="chip" data-curve="${m.symbol}" aria-pressed="${m.symbol === ui.curveSym}">${m.symbol}</button>`)
+    .join("");
+  const m = market(ui.curveSym);
+  const narrow = $("curve").clientWidth > 0 && $("curve").clientWidth < 520;
+  const W = narrow ? 380 : 640, H = narrow ? 260 : 240, L = 46, Rt = 12, T = 14, B = 34;
+  const top = niceMax(borrowRateAt(m.rate, 1));
+  const x = (u) => L + u * (W - L - Rt);
+  const y = (r) => T + (1 - r / top) * (H - T - B);
+  const N = 100;
+  const line = (f) =>
+    Array.from({ length: N + 1 }, (_, i) => `${i ? "L" : "M"}${x(i / N).toFixed(1)} ${y(f(i / N)).toFixed(1)}`).join(" ");
+  const yTicks = Array.from({ length: 5 }, (_, i) => (top * i) / 4);
+  const grid = yTicks
+    .map((r) => `<line x1="${L}" x2="${W - Rt}" y1="${y(r)}" y2="${y(r)}" stroke="var(--line)"></line>
+      <text x="${L - 8}" y="${y(r) + 4}" text-anchor="end">${pct(r, r < 0.1 && r > 0 ? 1 : 0)}</text>`)
+    .join("");
+  const xTicks = (narrow ? [0, 0.4, 0.8, 1] : [0, 0.2, 0.4, 0.6, 0.8, 1])
+    .map((u) => `<text x="${x(u)}" y="${H - 12}" text-anchor="middle">${u * 100}%</text>`)
+    .join("");
+  const u = m.utilization, br = m.borrowRate;
+  $("curve").innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Кривая ставки ${m.symbol}">
+      ${grid}${xTicks}
+      <line x1="${x(m.rate.kink)}" x2="${x(m.rate.kink)}" y1="${T}" y2="${H - B}" stroke="var(--muted)" stroke-dasharray="3 4"></line>
+      <text x="${x(m.rate.kink) - 6}" y="${T + 10}" text-anchor="end">излом ${pct(m.rate.kink, 0)}</text>
+      <path d="${line((v) => borrowRateAt(m.rate, v))} L${x(1)} ${y(0)} L${x(0)} ${y(0)} Z" fill="var(--accent)" opacity="0.08"></path>
+      <path d="${line((v) => borrowRateAt(m.rate, v))}" fill="none" stroke="var(--accent)" stroke-width="2.5"></path>
+      <path d="${line((v) => supplyRateAt(m.rate, m.rf, v))}" fill="none" stroke="var(--brass)" stroke-width="2" stroke-dasharray="6 5"></path>
+      <line x1="${x(u)}" x2="${x(u)}" y1="${y(br)}" y2="${H - B}" stroke="var(--ink)" stroke-width="1"></line>
+      <circle cx="${x(u)}" cy="${y(br)}" r="5.5" fill="var(--surface)" stroke="var(--accent)" stroke-width="2.5"></circle>
+      <text x="${Math.min(x(u) + 10, W - 160)}" y="${Math.max(y(br) - 10, T + 24)}" fill="var(--ink)" style="fill:var(--ink)">сейчас: ${pct(u, 1)} → ${pct(br)}</text>
+      <text x="${x(1)}" y="${H - 1}" text-anchor="end">загрузка пула</text>
+    </svg>`;
+  $("curve-text").textContent =
+    `Ставка зависит от того, какая доля денег ${m.symbol} уже выдана. До ${pct(m.rate.kink, 0)} кредит дорожает плавно, ` +
+    `после — резко, чтобы заёмщики возвращали деньги, а вкладчики могли их снять. Банк оставляет себе ${pct(m.rf, 0)} процентов.`;
+}
+
+function renderClients() {
+  const list = state.others || [];
+  $("clients-panel").hidden = !list.length;
+  $("clients").innerHTML = list
+    .map((c) => {
+      const hf = c.account.healthFactor;
+      return `<div class="client"><span>${esc(c.name)}</span>
+        <span class="num">залог ${money(c.account.collateralValue)} · долг ${money(c.account.debtValue)}</span>
+        <span class="pill ${hf === Infinity ? "good" : hfClass(hf)}">HF ${hfText(hf)}</span></div>`;
+    })
+    .join("");
+}
+
+// ---------------------------------------------------------------- бланк операции
+const ACTION = {
+  deposit: { verb: "Положить", avail: (m) => ["На кошельке", m.wallet] },
+  withdraw: { verb: "Снять", avail: (m) => ["Во вкладе", m.deposited] },
+  borrow: { verb: "Занять", avail: (m) => ["Безопасный максимум", maxFor("borrow", m)] },
+  repay: { verb: "Погасить", avail: (m) => ["Долг", m.borrowed] },
+};
+
+function maxFor(action, m) {
+  const a = state.account;
+  const d = DIG[m.symbol] ?? 2;
+  if (action === "deposit") return { value: floorTo(m.wallet, d), token: null };
+  if (action === "withdraw") {
+    if (a.debtValue <= 0) return { value: floorTo(m.deposited, d), token: "max" };
+    const safe = ((a.liquidationLimit - a.debtValue) / (m.price * m.lt)) * 0.995;
+    return { value: floorTo(Math.max(0, Math.min(m.deposited, safe, m.cash)), d), token: null };
+  }
+  if (action === "borrow") {
+    const v = Math.min(m.cash, ((a.borrowLimit - a.debtValue) / m.price) * 0.995);
+    return { value: floorTo(Math.max(0, v), d), token: null };
+  }
+  if (action === "repay") {
+    if (m.wallet >= m.borrowed) return { value: Math.ceil(m.borrowed * 10 ** d) / 10 ** d, token: "max" };
+    return { value: floorTo(m.wallet, d), token: null };
+  }
+}
+
+function readAmount() {
+  const v = parseFloat(String($("amount").value).replace(",", ".").replace(/\s/g, ""));
+  return Number.isFinite(v) ? v : 0;
+}
+
+function renderSlip() {
+  const m = market(ui.sym);
+  document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.action === ui.action)));
+  $("slip-chips").innerHTML = state.markets
+    .map((x) => `<button class="chip" data-slip="${x.symbol}" aria-pressed="${x.symbol === ui.sym}">${x.symbol}</button>`)
+    .join("");
+  $("amount-sym").textContent = m.symbol;
+  const [label, raw] = ACTION[ui.action].avail(m);
+  const availVal = typeof raw === "object" ? raw.value : raw;
+  $("avail").textContent = `${label}: ${amt(availVal, m.symbol)} ${m.symbol}`;
+
+  const a = readAmount();
+  const rows = state.markets.map((x) => ({ ...x }));
+  const r = rows.find((x) => x.symbol === ui.sym);
+  if (ui.action === "deposit") r.deposited += a;
+  if (ui.action === "withdraw") r.deposited -= a;
+  if (ui.action === "borrow") r.borrowed += a;
+  if (ui.action === "repay") r.borrowed -= Math.min(a, r.borrowed);
+  const before = state.account;
+  const after = computeAccount(rows);
+
+  // Как изменятся ставки после операции
+  let td = m.totalDeposits, tb = m.totalBorrows;
+  if (ui.action === "deposit") td += a;
+  if (ui.action === "withdraw") td -= a;
+  if (ui.action === "borrow") tb += a;
+  if (ui.action === "repay") tb -= Math.min(a, m.borrowed);
+  const total = td + m.reserves;
+  const u2 = total > 0 ? Math.min(Math.max(tb, 0) / total, 1) : 0;
+  const rateLine =
+    ui.action === "deposit" || ui.action === "withdraw"
+      ? ["Ставка по вкладу", `${pct(m.supplyRate)} → ${pct(supplyRateAt(m.rate, m.rf, u2))}`]
+      : ["Ставка по кредиту", `${pct(m.borrowRate)} → ${pct(borrowRateAt(m.rate, u2))}`];
+  const yearly =
+    ui.action === "deposit"
+      ? ["Доход за год", `≈ ${amt(a * supplyRateAt(m.rate, m.rf, u2), m.symbol)} ${m.symbol}`]
+      : ui.action === "borrow"
+      ? ["Проценты за год", `≈ ${amt(a * borrowRateAt(m.rate, u2), m.symbol)} ${m.symbol}`]
+      : null;
+
+  const hfAfter = after.healthFactor;
+  $("preview").innerHTML = [
+    ["Health factor", `${hfText(before.healthFactor)} → <b style="color:var(--${hfAfter === Infinity ? "good" : hfClass(hfAfter)})">${hfText(hfAfter)}</b>`],
+    ["Можно ещё занять", money(Math.max(0, after.borrowLimit - after.debtValue))],
+    rateLine,
+    yearly,
+  ]
+    .filter(Boolean)
+    .map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`)
+    .join("");
+
+  const verb = ACTION[ui.action].verb;
+  $("go").textContent = a > 0 ? `${verb} ${amt(a, m.symbol)} ${m.symbol}` : verb;
+  $("go").disabled = ui.busy || !(a > 0) || (mode === "wallet" && !chain);
+}
+
+function setStatus(text, kind = "") {
+  const el = $("status");
+  el.textContent = text;
+  el.className = "status " + kind;
+}
+
+async function submit() {
+  const a = readAmount();
+  if (!(a > 0)) return;
+  const amount = ui.maxToken || String(a);
+  ui.busy = true;
+  renderSlip();
+  setStatus(mode === "wallet" ? "Подтвердите транзакцию в кошельке…" : "");
+  try {
+    if (mode === "demo") {
+      sim[ui.action]("you", ui.sym, ui.maxToken || a);
+    } else {
+      await chain[ui.action](ui.sym, amount);
+    }
+    setStatus("Готово: " + $("go").textContent.toLowerCase() + ".", "ok");
+    $("amount").value = "";
+    ui.maxToken = null;
+  } catch (e) {
+    setStatus(e.message || String(e), "err");
+  }
+  ui.busy = false;
+  await refresh();
+}
+
+// ---------------------------------------------------------------- пульт
+function renderConsole() {
+  const box = $("console");
+  if (mode === "demo") {
+    $("console-hint").textContent = "Симуляция рынка";
+    const eth = state ? market("WETH") : null;
+    const r = state ? state.markets.reduce((s, m) => s + m.reserves * m.price, 0) : 0;
+    const t = state ? state.markets.reduce((s, m) => s + m.treasury * m.price, 0) : 0;
+    const keep = document.activeElement && document.activeElement.id === "eth-price";
+    if (keep) return; // не перерисовываем ползунок, пока его тянут
+    box.innerHTML = `
+      <div class="slider">
+        <div class="slider-head"><label class="label" for="eth-price">Цена ETH</label><output id="eth-out">${eth ? money(eth.price) : ""}</output></div>
+        <input type="range" id="eth-price" min="500" max="4000" step="50" value="${eth ? eth.price : 2000}">
+        <div class="ticks"><span>$500</span><span>$2000</span><span>$4000</span></div>
+      </div>
+      <div>
+        <div class="label" style="margin-bottom:6px">Перемотать время</div>
+        <div class="row">
+          <button class="btn" data-time="1">+1 день</button>
+          <button class="btn" data-time="30">+1 месяц</button>
+          <button class="btn" data-time="365">+1 год</button>
+        </div>
+      </div>
+      <div class="row">
+        <button class="btn alert" id="liquidate">Запустить бот-ликвидатора</button>
+        <button class="btn" id="reset">Начать заново</button>
+      </div>
+      <div class="vault">
+        <div class="label">Доход банка</div>
+        <div class="v">${money(r)}</div>
+        ${state ? state.markets.map((m) => `<div class="kv"><span>Резервы ${m.symbol}</span><span>${amt(m.reserves, m.symbol, 4)}</span></div>`).join("") : ""}
+        <div class="kv"><span>Уже в казне</span><span>${money(t)}</span></div>
+        <button class="btn" id="reserves" ${r > 0.005 ? "" : "disabled"}>Вывести прибыль в казну</button>
+        <p class="note" style="margin:0">10% всех процентов по кредитам идёт банку — это его выручка.</p>
+      </div>`;
+    return;
+  }
+
+  $("console-hint").textContent = "Сеть и токены";
+  if (!window.ethers) {
+    box.innerHTML = `<p class="note">Библиотека ethers не загрузилась, поэтому режим кошелька недоступен. Демо-режим работает.</p>`;
+    return;
+  }
+  if (!CONFIG.deployments.length) {
+    box.innerHTML = `
+      <p class="note">Контракты банка ещё не развёрнуты. Сначала выполните в папке проекта:</p>
+      <p class="note"><code>RPC_URL=… PRIVATE_KEY=… npm run deploy</code></p>
+      <p class="note">Затем <code>npm run build:web</code> и откройте <code>dist/index.html</code> через <code>npx serve dist</code> в браузере с MetaMask.</p>`;
+    return;
+  }
+  if (!chain) {
+    box.innerHTML = `
+      <label class="label" for="net">Сеть</label>
+      <select id="net">${CONFIG.deployments.map((d, i) => `<option value="${i}" ${i === ui.net ? "selected" : ""}>${esc(d.network)} · chainId ${d.chainId}</option>`).join("")}</select>
+      <button class="go" id="connect">Подключить MetaMask</button>
+      <p class="note" style="margin:0">Нужен кошелёк только с тестовыми ETH. Встроенное превью не видит расширения браузера — откройте страницу отдельно.</p>`;
+    return;
+  }
+  const d = CONFIG.deployments[ui.net];
+  box.innerHTML = `
+    <div class="kv"><span>Пул</span><span class="mono">${esc(d.pool.slice(0, 10))}…</span></div>
+    <div>
+      <div class="label" style="margin-bottom:6px">Тестовые токены</div>
+      <div class="row">${d.assets.map((a) => `<button class="btn" data-faucet="${a.symbol}">Получить ${MyBankChain.FAUCET[a.symbol]} ${a.symbol}</button>`).join("")}</div>
+    </div>
+    ${
+      state && state.isOwner
+        ? `<div class="vault">
+            <div class="label">Вы владелец банка</div>
+            <div class="row"><input id="owner-price" class="btn" style="width:120px" inputmode="decimal" placeholder="Цена ETH, $"><button class="btn" id="set-price">Обновить цену</button></div>
+            ${d.assets.map((a) => `<button class="btn" data-reserves="${a.symbol}">Вывести резервы ${a.symbol}</button>`).join("")}
+          </div>`
+        : ""
+    }`;
+}
+
+async function guarded(fn) {
+  setStatus(mode === "wallet" ? "Подтвердите транзакцию в кошельке…" : "");
+  try {
+    await fn();
+    setStatus("Готово.", "ok");
+  } catch (e) {
+    setStatus(e.message || String(e), "err");
+  }
+  await refresh();
+}
+
+function renderJournal() {
+  const log = state.log || [];
+  if (!log.length) {
+    $("journal").innerHTML = `<li><span class="when"></span><span class="txt hint">Операций пока нет.</span></li>`;
+    return;
+  }
+  const explorer = mode === "wallet" && state.network === "sepolia" ? "https://sepolia.etherscan.io/tx/" : null;
+  $("journal").innerHTML = log
+    .map(
+      (e) => `<li class="${e.kind}"><span class="when">${e.day !== undefined ? "д. " + e.day : esc(e.time || "")}</span>
+      <span class="txt">${esc(e.text)}${explorer && e.hash ? ` <a href="${explorer + e.hash}" target="_blank" rel="noopener">транзакция</a>` : ""}</span></li>`
+    )
+    .join("");
+}
+
+// ---------------------------------------------------------------- события
+document.addEventListener("click", async (ev) => {
+  const t = ev.target.closest("button, tr[data-sym]");
+  if (!t) return;
+  if (t.id === "mode-demo" || t.id === "mode-wallet") {
+    mode = t.id === "mode-demo" ? "demo" : "wallet";
+    setStatus("");
+    $("amount").value = "";
+    ui.maxToken = null;
+    return refresh();
+  }
+  if (t.dataset.sym || t.dataset.slip) {
+    ui.sym = t.dataset.sym || t.dataset.slip;
+    ui.curveSym = ui.sym;
+    ui.maxToken = null;
+    return render();
+  }
+  if (t.dataset.curve) { ui.curveSym = t.dataset.curve; return renderCurve(); }
+  if (t.dataset.action) { ui.action = t.dataset.action; ui.maxToken = null; setStatus(""); return renderSlip(); }
+  if (t.id === "max") {
+    const mx = maxFor(ui.action, market(ui.sym));
+    $("amount").value = mx.value ? String(mx.value) : "0";
+    ui.maxToken = mx.token;
+    return renderSlip();
+  }
+  if (t.id === "go") return submit();
+  if (t.dataset.time) {
+    sim.timeTravel(Number(t.dataset.time) * DAY);
+    return refresh();
+  }
+  if (t.id === "liquidate") {
+    const res = sim.runLiquidator();
+    setStatus(res.length ? `Ликвидаций: ${res.length}. Подробности в журнале.` : "Все счета в порядке — ликвидировать некого.", res.length ? "err" : "ok");
+    return refresh();
+  }
+  if (t.id === "reset") { sim.reset(); setStatus("Банк открыт заново."); return refresh(); }
+  if (t.id === "reserves") {
+    try { for (const m of state.markets) if (m.reserves > 1e-9) sim.withdrawReserves(m.symbol); } catch (e) { setStatus(e.message, "err"); }
+    return refresh();
+  }
+  if (t.id === "connect") {
+    ui.net = Number($("net").value);
+    setStatus("Подключаю кошелёк…");
+    try {
+      chain = await MyBankChain.ChainBank.connectBrowser({ ethers: window.ethers, deployment: CONFIG.deployments[ui.net], abis: CONFIG.abis });
+      setStatus("Кошелёк подключён.", "ok");
+      window.ethereum?.on?.("accountsChanged", () => { chain = null; refresh(); });
+    } catch (e) {
+      setStatus(e.message || String(e), "err");
+    }
+    return refresh();
+  }
+  if (t.dataset.faucet) return guarded(() => chain.faucet(t.dataset.faucet));
+  if (t.dataset.reserves) return guarded(() => chain.withdrawReserves(t.dataset.reserves));
+  if (t.id === "set-price") return guarded(() => chain.setPrice("WETH", $("owner-price").value));
+});
+
+document.addEventListener("keydown", (ev) => {
+  const row = ev.target.closest && ev.target.closest("tr[data-sym]");
+  if (row && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); row.click(); }
+  if (ev.target.id === "amount" && ev.key === "Enter") submit();
+});
+
+$("amount").addEventListener("input", () => { ui.maxToken = null; setStatus(""); renderSlip(); });
+
+document.addEventListener("input", (ev) => {
+  if (ev.target.id === "eth-price") $("eth-out").textContent = money(ev.target.value);
+});
+document.addEventListener("change", (ev) => {
+  if (ev.target.id === "eth-price") {
+    sim.setPrice("WETH", Number(ev.target.value));
+    ev.target.blur();
+    refresh();
+  }
+  if (ev.target.id === "net") ui.net = Number(ev.target.value);
+});
+
+let resizeTimer;
+window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => state && renderCurve(), 150); });
+
+// Стартовое состояние демо: клиент уже положил ETH и взял кредит, чтобы было что смотреть
+sim.deposit("you", "WETH", 2);
+sim.borrow("you", "USDC", 2_000);
+sim.timeTravel(30 * DAY);
+ui.action = "borrow";
+refresh();
+</script>
