@@ -20,12 +20,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      # npm install, а не npm ci: в lock-файле ganache есть пакет только для macOS
+      - run: npm install --no-audit --no-fund
       - run: npm run build:web
       - run: rm -f dist/artifact.html
       - uses: actions/configure-pages@v5
