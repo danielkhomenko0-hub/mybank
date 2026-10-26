@@ -815,6 +815,11 @@ document.addEventListener("click", async (ev) => {
     ui.deploying = true; ui.deployJson = ""; ui.deployStep = "Подключаю кошелёк…"; renderConsole();
     try {
       await window.ethereum.request({ method: "eth_requestAccounts" });
+      // В основной сети деплой запрещён — просим MetaMask самому переключиться на Sepolia
+      if ((await window.ethereum.request({ method: "eth_chainId" })) === "0x1") {
+        ui.deployStep = "Переключаю кошелёк на Sepolia — подтвердите в MetaMask"; renderConsole();
+        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0xaa36a7" }] });
+      }
       const signer = await new ethers.BrowserProvider(window.ethereum).getSigner();
       const dep = await MyBankChain.deployBank({
         ethers: window.ethers, signer, artifacts: CONFIG.artifacts,
