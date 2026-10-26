@@ -1,0 +1,26 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "deployedAt": "2026-10-26T14:39:01.786Z",
+  "deployBlock": 11998030,
+  "owner": "0xa0d11FAb59955f7917306031160E34fa3Ff0d9fA",
+  "pool": "0x965113daaD42BbF2f05d898c7a5362e9Bd8D1D8D",
+  "oracle": "0x3fCE50d4C1649B66476603FDcbb6f3b2505CE9A5",
+  "assets": [
+    {
+      "symbol": "USDC",
+      "address": "0xb8CB2F0Df16A2B5817F9Ae17291223B484855E01",
+      "decimals": 6
+    },
+    {
+      "symbol": "USDT",
+      "address": "0x8F8BFe188436810E227642b238C6d75304D0Ba2C",
+      "decimals": 6
+    },
+    {
+      "symbol": "WETH",
+      "address": "0x9cE7dF213CccB147A959e9ad51F4507fB22Ec195",
+      "decimals": 18
+    }
+  ]
+}

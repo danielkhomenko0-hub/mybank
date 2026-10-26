@@ -133,6 +133,6 @@ RPC_URL=https://... PRIVATE_KEY=0x... NETWORK=sepolia npm run liquidator
 4. ✅ Рынок USDT с учётом его нестандартного поведения.
 5. ✅ Бот-ликвидатор, следящий за счетами в сети.
 6. ✅ GitHub: автоматические тесты и публикация сайта.
-7. Деплой в Sepolia (нужен тестовый кошелёк).
+7. ✅ Деплой в Sepolia: пул [`0x9651…1D8D`](https://sepolia.etherscan.io/address/0x965113daaD42BbF2f05d898c7a5362e9Bd8D1D8D).
 8. Chainlink-оракул и обработка bad debt.
 9. Фиат-часть (уже не код, а бизнес): партнёр BaaS/EMI, авторизация FCA по крипто-режиму (с 25.10.2027).
