@@ -11,7 +11,8 @@
     "chain": "node scripts/local-chain.js",
     "deploy": "node scripts/compile.js && node scripts/deploy.js",
     "build:web": "node scripts/compile.js && node scripts/build-web.js",
-    "liquidator": "node scripts/compile.js && node scripts/liquidator.js"
+    "liquidator": "node scripts/compile.js && node scripts/liquidator.js",
+    "check:sepolia": "node scripts/compile.js && node scripts/check-sepolia.js"
   },
   "keywords": [],
   "author": "",
