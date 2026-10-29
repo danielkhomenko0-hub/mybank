@@ -295,6 +295,9 @@ contract LendingPool {
 
         _repay(debtAsset, repayAmount, msg.sender, borrower);
 
+        // Хватает ли свободного залога — проверяем до списания, иначе залог учитывается дважды
+        if (seize > _cash(cm)) revert InsufficientLiquidity();
+
         // Списываем залог у заёмщика
         uint256 seizeShares = seize == collBalance
             ? depositShares[collateralAsset][borrower]
@@ -302,7 +305,6 @@ contract LendingPool {
         depositShares[collateralAsset][borrower] -= seizeShares;
         cm.totalDepositShares -= seizeShares;
         cm.totalDeposits -= seize;
-        if (seize > _cash(cm)) revert InsufficientLiquidity();
 
         _safeTransfer(collateralAsset, msg.sender, seize);
         emit Liquidate(msg.sender, borrower, debtAsset, collateralAsset, repayAmount, seize);

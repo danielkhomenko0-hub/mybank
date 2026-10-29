@@ -337,13 +337,14 @@
           repayAmount = (collBalance * cm.price) / (1 + cm.bonus) / dm.price;
         }
         this._repay(liquidatorId, debtSym, repayAmount, borrowerId);
+        // Как в контракте: свободный залог проверяем до списания
+        if (seize > this.cash(collSym) + 1e-9) throw new BankError("InsufficientLiquidity");
 
         const b = this._user(borrowerId);
         const seizeShares = seize >= collBalance ? b.dep[collSym] : (seize * cm.depositShares) / cm.totalDeposits;
         b.dep[collSym] -= seizeShares;
         cm.depositShares -= seizeShares;
         cm.totalDeposits -= seize;
-        if (seize > this.cash(collSym) + 1e-9) throw new BankError("InsufficientLiquidity");
         this._user(liquidatorId).wallet[collSym] += seize;
 
         const profit = seize * cm.price - repayAmount * dm.price;

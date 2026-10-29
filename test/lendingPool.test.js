@@ -132,6 +132,25 @@ test("ликвидация после падения цены: 50% долга, �
   assert.equal((await pool.accountData(bob.address)).healthFactor, wad(1.08));
 });
 
+test("ликвидация при глубоком падении: залог единственного вкладчика WETH можно забрать больше половины", async () => {
+  const { alice, bob, carol, usdc, weth, pool, oracle } = await setup();
+  const U = await usdc.getAddress();
+  const W = await weth.getAddress();
+
+  await send(pool.connect(alice).deposit(U, usd(10_000)));
+  await send(pool.connect(bob).deposit(W, eth(1))); // в рынке WETH только залог Боба
+  await send(pool.connect(bob).borrow(U, usd(1_500)));
+
+  // ETH падает до $1400: ликвидатор гасит $750 и забирает 750 * 1.05 / 1400 = 0.5625 ETH — больше половины рынка
+  await send(oracle.setPrice(W, wad(1_400)));
+  const wethBefore = await weth.balanceOf(carol.address);
+  await send(pool.connect(carol).liquidate(bob.address, U, W, usd(750)));
+
+  assert.equal((await weth.balanceOf(carol.address)) - wethBefore, eth(0.5625));
+  assert.equal(await pool.depositBalance(W, bob.address), eth(0.4375));
+  assert.equal(await pool.borrowBalance(U, bob.address), usd(750));
+});
+
 test("полное погашение долга освобождает весь залог", async () => {
   const { alice, bob, usdc, weth, pool, timeTravel } = await setup();
   const U = await usdc.getAddress();

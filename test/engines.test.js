@@ -48,6 +48,18 @@ test("симулятор: ликвидация совпадает с контр�
   close(sim.accountData("bob").healthFactor, 1.08, 1e-12, "HF после");
 });
 
+test("симулятор: глубокая ликвидация забирает больше половины залога, как контракт", () => {
+  const sim = emptySim();
+  sim.deposit("alice", "USDC", 10_000);
+  sim.deposit("bob", "WETH", 1);
+  sim.borrow("bob", "USDC", 1_500);
+  sim.setPrice("WETH", 1_400);
+
+  const r = sim.liquidate("carol", "bob", "USDC", "WETH", 750);
+  close(r.seized, 0.5625, 1e-12, "изъято залога");
+  close(sim.depositBalance("WETH", "bob"), 0.4375, 1e-12, "осталось у Боба");
+});
+
 test("симулятор: неудачная операция откатывается целиком", () => {
   const sim = emptySim();
   sim.deposit("alice", "USDC", 10_000);
