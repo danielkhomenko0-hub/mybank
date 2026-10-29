@@ -287,7 +287,8 @@
 
     async getState() {
       const me = await this.address();
-      const [owner, paused] = await Promise.all([this.pool.owner(), this.pool.paused()]);
+      // paused и usesFeed есть только у новых контрактов — у старого развёртывания считаем «нет»
+      const [owner, paused] = await Promise.all([this.pool.owner(), this.pool.paused().catch(() => false)]);
       const WAD = 18;
       this._prices = this._prices || {};
       let stale = false;
@@ -301,7 +302,7 @@
           );
           const [m, usesFeed, util, br, sr, wallet, dep, bor] = await Promise.all([
             this.pool.markets(a.address),
-            this.oracle.usesFeed(a.address),
+            this.oracle.usesFeed(a.address).catch(() => false),
             this.pool.utilization(a.address),
             this.pool.borrowRate(a.address),
             this.pool.supplyRate(a.address),
