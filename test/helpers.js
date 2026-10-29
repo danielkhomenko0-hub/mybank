@@ -107,9 +107,10 @@ async function expectRevert(promise, errorName) {
   } catch (e) {
     let name = e.revert?.name || "";
     const data = e.data || e.info?.error?.data;
-    if (!name && typeof data === "string" && data.length >= 10) {
-      const iface = new ethers.Interface(artifact("LendingPool").abi);
-      name = iface.parseError(data)?.name || "";
+    // Ошибка может прийти и из пула, и из оракула (пул зовёт его внутри)
+    for (const c of ["LendingPool", "SimpleOracle"]) {
+      if (name || typeof data !== "string" || data.length < 10) break;
+      name = new ethers.Interface(artifact(c).abi).parseError(data)?.name || "";
     }
     const text = name + " " + (e.shortMessage || "") + " " + (e.message || "");
     if (text.includes(errorName)) return;

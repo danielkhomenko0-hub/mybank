@@ -38,6 +38,16 @@ async function readLive() {
   check(same(await oracle.owner(), dep.owner), "владелец оракула совпадает с deployments");
   check(same(await pool.oracle(), dep.oracle), "пул смотрит в правильный оракул");
   check(Number(await pool.marketCount()) === dep.assets.length, `рынков открыто: ${await pool.marketCount()}`);
+  if (dep.feeds) {
+    check((await pool.paused()) === false, "банк не на паузе");
+    for (const [symbol, f] of Object.entries(dep.feeds)) {
+      const feed = new ethers.Contract(f.feed, ["function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)", "function decimals() view returns (uint8)"], provider);
+      const [[, answer, , updatedAt], dec] = await Promise.all([feed.latestRoundData(), feed.decimals()]);
+      const onFeed = await oracle.usesFeed(sym[symbol].address);
+      const ageMin = Math.round((Date.now() / 1000 - Number(updatedAt)) / 60);
+      check(onFeed, `${symbol}: цена от Chainlink ($${fmt(answer, Number(dec))}, обновлена ${ageMin} мин назад)${onFeed ? "" : " — сейчас стоит ручная цена"}`);
+    }
+  }
   for (const a of dep.assets) {
     const m = await pool.markets(a.address);
     const price = await oracle.getPrice(a.address);
@@ -116,6 +126,15 @@ async function forkScenario() {
   acc = await pool(bob).accountData(bob.address);
   check(acc.healthFactor > WAD, `Боб занял ${loan} USDC под 1 WETH ($${fmt(ethPrice, 18)}), HF ${hf(acc.healthFactor)}`);
 
+  const feed = dep.feeds?.WETH;
+  if (feed) {
+    // Ручная цена отключает фид, setFeed возвращает его
+    await send(oracle.setPrice(sym.WETH.address, ethPrice));
+    const manual = !(await oracle.usesFeed(sym.WETH.address));
+    await send(oracle.setFeed(sym.WETH.address, feed.feed, feed.maxAge));
+    check(manual && (await oracle.usesFeed(sym.WETH.address)), "владелец переключает цену ETH: вручную ↔ Chainlink");
+  }
+
   let refused = false;
   try {
     await send(pool(bob).borrow(sym.USDC.address, U(Math.ceil(limitUsd * 0.1))));
@@ -125,6 +144,14 @@ async function forkScenario() {
   check(refused, "занять сверх лимита не даёт");
 
   await call({ method: "evm_increaseTime", params: [365 * 24 * 3600] });
+  await call({ method: "evm_mine", params: [] });
+  if (feed) {
+    // Через год фид в копии не обновлялся — цена устарела, и банк её не принимает
+    let stale = false;
+    try { await oracle.getPrice(sym.WETH.address); } catch (e) { stale = /StalePrice|0x19abf40e/.test(e.data || e.message); }
+    check(stale, "устаревшая цена Chainlink блокируется (StalePrice)");
+    await send(oracle.setPrice(sym.WETH.address, ethPrice)); // выход владельца из такой ситуации — ручная цена
+  }
   await send(pool(alice).accrueInterest(sym.USDC.address));
   const aliceNow = await pool(alice).depositBalance(sym.USDC.address, alice.address);
   check(aliceNow > U(10_000), `через год у Алисы ${fmt(aliceNow, 6)} USDC`);
@@ -137,8 +164,9 @@ async function forkScenario() {
   });
   check((await bot.tick()).length === 0, "здоровый счёт бот не трогает");
 
-  // Владелец обваливает ETH на 30%
-  const crashed = (ethPrice * 70n) / 100n;
+  // Владелец обваливает ETH на 20%: счёт нездоров, но залог ещё больше долга.
+  // При 30% долг превысил бы залог — это плохой долг, его съели бы резервы (проверяется в тестах)
+  const crashed = (ethPrice * 80n) / 100n;
   await send(oracle.setPrice(sym.WETH.address, crashed));
   acc = await pool(bob).accountData(bob.address);
   check(acc.healthFactor < WAD, `ETH упал до $${fmt(crashed, 18)}, HF Боба ${hf(acc.healthFactor)}`);
@@ -169,6 +197,14 @@ async function forkScenario() {
     "USDT ведёт себя как настоящий, вклад проходит"
   );
 
+  if (dep.feeds) {
+    await send(pool(owner).setPaused(true));
+    let stopped = false;
+    try { await send(pool(alice).deposit(sym.USDT.address, U(1))); } catch { stopped = true; }
+    await send(pool(owner).setPaused(false));
+    check(stopped, "пауза останавливает вклады, после снятия всё работает");
+  }
+
   const usdc = await pool(alice).markets(sym.USDC.address);
   const cash = usdc.totalDeposits + usdc.reserves - usdc.totalBorrows;
   const take = aliceNow < cash ? aliceNow : cash;
@@ -182,6 +218,14 @@ async function forkScenario() {
   console.log(failures ? `\nПровалено проверок: ${failures}` : "\nВсе проверки прошли.");
   process.exit(failures ? 1 : 0);
 })().catch((e) => {
-  console.error("Ошибка проверки:", e.shortMessage || e.message);
+  // Называем ошибку контракта по имени, если её можно расшифровать
+  let name = "";
+  const data = e.data || e.info?.error?.data;
+  for (const c of ["LendingPool", "SimpleOracle"]) {
+    if (name || typeof data !== "string" || data.length < 10) break;
+    try { name = new ethers.Interface(abi(c)).parseError(data)?.name || ""; } catch {}
+  }
+  console.error("Ошибка проверки:", name || e.shortMessage || e.message);
+  if (e.stack) console.error(e.stack.split("\n").find((l) => l.includes("check-sepolia")) || "");
   process.exit(2);
 });

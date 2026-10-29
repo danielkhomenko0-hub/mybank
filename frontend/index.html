@@ -728,6 +728,8 @@ function renderConsole() {
   const d = CONFIG.deployments[ui.net];
   box.innerHTML = `
     <div class="kv"><span>Пул</span><span class="mono">${esc(d.pool.slice(0, 10))}…</span></div>
+    ${state && state.paused ? `<div class="kv"><span>Статус</span><span>⏸ На паузе: вклады и кредиты остановлены</span></div>` : ""}
+    ${state && state.priceStale ? `<div class="kv"><span>Цены</span><span>⚠ Цена Chainlink устарела — показана последняя известная</span></div>` : ""}
     <div>
       <div class="label" style="margin-bottom:6px">Тестовые токены</div>
       <div class="row">${d.assets.map((a) => `<button class="btn" data-faucet="${a.symbol}">Получить ${MyBankChain.FAUCET[a.symbol]} ${a.symbol}</button>`).join("")}</div>
@@ -737,6 +739,14 @@ function renderConsole() {
         ? `<div class="vault">
             <div class="label">Вы владелец банка</div>
             <div class="row"><input id="owner-price" class="btn" style="width:120px" inputmode="decimal" placeholder="Цена ETH, $"><button class="btn" id="set-price">Обновить цену</button></div>
+            ${(() => {
+              const w = state.markets.find((m) => m.symbol === "WETH");
+              if (!w || !w.hasFeed) return "";
+              return w.priceSource === "chainlink"
+                ? `<div class="hint">Цена ETH сейчас от Chainlink. Ручная цена отключит фид — так можно показать обвал.</div>`
+                : `<button class="btn" id="use-chainlink">Вернуть цену ETH от Chainlink</button>`;
+            })()}
+            <button class="btn" id="pause">${state.paused ? "Снять паузу" : "Поставить банк на паузу"}</button>
             ${d.assets.map((a) => `<button class="btn" data-reserves="${a.symbol}">Вывести резервы ${a.symbol}</button>`).join("")}
           </div>`
         : ""
@@ -859,6 +869,8 @@ document.addEventListener("click", async (ev) => {
   if (t.dataset.faucet) return guarded(() => chain.faucet(t.dataset.faucet));
   if (t.dataset.reserves) return guarded(() => chain.withdrawReserves(t.dataset.reserves));
   if (t.id === "set-price") return guarded(() => chain.setPrice("WETH", $("owner-price").value));
+  if (t.id === "use-chainlink") return guarded(() => chain.useChainlink("WETH"));
+  if (t.id === "pause") return guarded(() => chain.setPaused(!state.paused));
 });
 
 document.addEventListener("keydown", (ev) => {

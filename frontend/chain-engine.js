@@ -10,6 +10,10 @@
   // Какой контракт разворачивать для каждого тестового токена
   const TOKEN_CONTRACT = { USDT: "TetherLikeToken" };
   const NETWORK_NAMES = { 1: "mainnet", 11155111: "sepolia", 1337: "localhost", 31337: "localhost" };
+  // Фиды Chainlink по сетям: в Sepolia цена ETH настоящая. maxAge — сколько секунд цена считается свежей
+  const CHAINLINK = {
+    11155111: { WETH: { feed: "0x694AA1769357215DE4FAC081bf1f309aDC325306", maxAge: 3 * 3600 } },
+  };
 
   /**
    * Разворачивает весь банк с кошелька пользователя (каждая транзакция подтверждается в MetaMask).
@@ -30,7 +34,8 @@
       throw new BankError("NoGas", "На кошельке 0 ETH в этой сети. Возьмите тестовые ETH в Sepolia faucet.");
     }
     const markets = Sim.MARKET_CONFIG;
-    const total = 2 + markets.length * 3;
+    const feeds = CHAINLINK[Number(chainId)] || {};
+    const total = 2 + markets.length * 3 + Object.keys(feeds).length;
     let done = 0;
     const step = (text) => onStep(text, done, total);
     const wad = (n) => ethers.parseUnits(String(n), 18);
@@ -63,6 +68,8 @@
             baseRate: wad(m.rate.base), slope1: wad(m.rate.s1), slope2: wad(m.rate.s2), kink: wad(m.rate.kink),
           })
         );
+        const f = feeds[m.symbol];
+        if (f) await sendTx(`Цена ${m.symbol} от Chainlink`, () => oracle.setFeed(addr, f.feed, f.maxAge));
         assets.push({ symbol: m.symbol, address: addr, decimals: m.decimals });
       }
       onStep("Готово", total, total);
@@ -75,6 +82,7 @@
         pool: await pool.getAddress(),
         oracle: await oracle.getAddress(),
         assets,
+        ...(Object.keys(feeds).length ? { feeds } : {}),
       };
     } catch (e) {
       if (e && (e.code === "ACTION_REJECTED" || e.code === 4001)) {
@@ -164,9 +172,11 @@
       }
       let name = e?.revert?.name;
       const data = e?.data || e?.info?.error?.data || e?.error?.data;
-      if (!name && typeof data === "string" && data.length >= 10) {
+      // Ошибка может прийти из пула или из оракула, который пул вызывает внутри
+      for (const c of [this.pool, this.oracle]) {
+        if (name || typeof data !== "string" || data.length < 10) break;
         try {
-          name = this.pool.interface.parseError(data)?.name;
+          name = c.interface.parseError(data)?.name;
         } catch {}
       }
       if (name && ERRORS_RU[name]) return new BankError(name);
@@ -253,6 +263,18 @@
       );
     }
 
+    /** Вернуть активу цену от Chainlink (после ручной цены для демо). */
+    async useChainlink(sym) {
+      const t = this._token(sym);
+      const f = this.dep.feeds?.[sym];
+      if (!f) throw new BankError("InvalidFeed", `Для ${sym} в этой сети нет фида Chainlink.`);
+      return this._send(`Цена ${sym} снова от Chainlink`, () => this.oracle.setFeed(t.address, f.feed, f.maxAge));
+    }
+
+    async setPaused(value) {
+      return this._send(value ? "Банк поставлен на паузу" : "Пауза снята", () => this.pool.setPaused(value));
+    }
+
     async withdrawReserves(sym) {
       const t = this._token(sym);
       const m = await this.pool.markets(t.address);
@@ -265,14 +287,21 @@
 
     async getState() {
       const me = await this.address();
-      const owner = await this.pool.owner();
+      const [owner, paused] = await Promise.all([this.pool.owner(), this.pool.paused()]);
       const WAD = 18;
+      this._prices = this._prices || {};
+      let stale = false;
       const markets = await Promise.all(
         this.dep.assets.map(async (a) => {
           const t = this.tokens[a.symbol];
-          const [m, price, util, br, sr, wallet, dep, bor] = await Promise.all([
+          // Устаревшая цена Chainlink не должна ломать страницу — показываем последнюю известную
+          const price = await this.oracle.getPrice(a.address).then(
+            (p) => (this._prices[a.symbol] = p),
+            () => ((stale = true), this._prices[a.symbol] ?? 0n)
+          );
+          const [m, usesFeed, util, br, sr, wallet, dep, bor] = await Promise.all([
             this.pool.markets(a.address),
-            this.oracle.getPrice(a.address),
+            this.oracle.usesFeed(a.address),
             this.pool.utilization(a.address),
             this.pool.borrowRate(a.address),
             this.pool.supplyRate(a.address),
@@ -306,24 +335,30 @@
             deposited: this._num(dep, d),
             borrowed: this._num(bor, d),
             treasury: 0,
+            priceSource: usesFeed ? "chainlink" : "manual",
+            hasFeed: Boolean(this.dep.feeds?.[a.symbol]),
           };
         })
       );
-      const acc = await this.pool.accountData(me);
-      const hf = acc.healthFactor === this.ethers.MaxUint256 ? Infinity : this._num(acc.healthFactor, WAD);
+      // Пока цена устарела, контракт не посчитает счёт — считаем сами по последним ценам
+      const account = stale
+        ? Sim.computeAccount(markets)
+        : await this.pool.accountData(me).then((acc) => ({
+            collateralValue: this._num(acc.collateralValue, WAD),
+            borrowLimit: this._num(acc.borrowLimit, WAD),
+            liquidationLimit: this._num(acc.liquidationLimit, WAD),
+            debtValue: this._num(acc.debtValue, WAD),
+            healthFactor: acc.healthFactor === this.ethers.MaxUint256 ? Infinity : this._num(acc.healthFactor, WAD),
+          }));
       return {
         mode: "wallet",
         userLabel: me.slice(0, 6) + "…" + me.slice(-4),
         address: me,
         network: this.dep.network,
         markets,
-        account: {
-          collateralValue: this._num(acc.collateralValue, WAD),
-          borrowLimit: this._num(acc.borrowLimit, WAD),
-          liquidationLimit: this._num(acc.liquidationLimit, WAD),
-          debtValue: this._num(acc.debtValue, WAD),
-          healthFactor: hf,
-        },
+        account,
+        paused,
+        priceStale: stale,
         others: [],
         log: this.log.slice(),
         isOwner: owner.toLowerCase() === me.toLowerCase(),

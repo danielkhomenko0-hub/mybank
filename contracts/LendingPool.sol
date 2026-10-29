@@ -23,6 +23,8 @@ contract LendingPool {
     uint256 private constant BPS = 10_000;
     uint256 private constant YEAR = 365 days;
     uint256 public constant CLOSE_FACTOR_BPS = 5_000; // за одну ликвидацию можно погасить до 50% долга
+    // Если HF ниже 0.95, частичная ликвидация уже не спасает счёт (бонус съедает залог) — гасится весь долг
+    uint256 public constant FULL_LIQUIDATION_HF = 0.95e18;
     uint256 public constant MAX_MARKETS = 10;
 
     // ---------------------------------------------------------------- типы
@@ -67,6 +69,8 @@ contract LendingPool {
     mapping(address => mapping(address => uint256)) public depositShares; // asset => user => shares
     mapping(address => mapping(address => uint256)) public borrowShares;  // asset => user => shares
     uint256 private _locked = 1;
+    address public pendingOwner;
+    bool public paused; // аварийная остановка: новые вклады и кредиты запрещены
 
     // ---------------------------------------------------------------- события
     event MarketListed(address indexed asset);
@@ -83,9 +87,16 @@ contract LendingPool {
         uint256 seized
     );
     event ReservesWithdrawn(address indexed asset, address indexed to, uint256 amount);
+    /// @notice Безнадёжный долг списан: fromReserves покрыл банк, остальное — вкладчики этого рынка.
+    event BadDebtWrittenOff(address indexed asset, address indexed borrower, uint256 amount, uint256 fromReserves);
+    event PausedSet(bool paused);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     // ---------------------------------------------------------------- ошибки
     error NotOwner();
+    error NotPendingOwner();
+    error Paused();
     error Reentrancy();
     error MarketNotListed();
     error InvalidParams();
@@ -110,6 +121,11 @@ contract LendingPool {
 
     modifier listed(address asset) {
         if (!markets[asset].listed) revert MarketNotListed();
+        _;
+    }
+
+    modifier whenNotPaused() {
+        if (paused) revert Paused();
         _;
     }
 
@@ -160,6 +176,26 @@ contract LendingPool {
         emit ReservesWithdrawn(asset, to, amount);
     }
 
+    /// @notice Аварийная остановка. На паузе нельзя вкладывать и брать кредиты,
+    ///         но можно гасить долг, снимать вклады и ликвидировать — иначе клиенты застрянут.
+    function setPaused(bool value) external onlyOwner {
+        paused = value;
+        emit PausedSet(value);
+    }
+
+    /// @notice Передача банка в два шага: новый владелец (например, мультисиг) должен подтвердить.
+    function transferOwnership(address newOwner) external onlyOwner {
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotPendingOwner();
+        emit OwnershipTransferred(owner, msg.sender);
+        owner = msg.sender;
+        pendingOwner = address(0);
+    }
+
     function _checkRiskParams(
         uint16 ltvBps,
         uint16 liqThresholdBps,
@@ -178,7 +214,7 @@ contract LendingPool {
     // ================================================================ пользователи
 
     /// @notice Положить деньги в банк и получать процент.
-    function deposit(address asset, uint256 amount) external nonReentrant listed(asset) {
+    function deposit(address asset, uint256 amount) external nonReentrant whenNotPaused listed(asset) {
         if (amount == 0) revert ZeroAmount();
         _accrue(asset);
         Market storage m = markets[asset];
@@ -226,7 +262,7 @@ contract LendingPool {
     }
 
     /// @notice Взять кредит под залог своих депозитов.
-    function borrow(address asset, uint256 amount) external nonReentrant listed(asset) {
+    function borrow(address asset, uint256 amount) external nonReentrant whenNotPaused listed(asset) {
         if (amount == 0) revert ZeroAmount();
         _accrueAll();
         Market storage m = markets[asset];
@@ -267,9 +303,11 @@ contract LendingPool {
         listed(collateralAsset)
     {
         _accrueAll();
-        if (_accountData(borrower).healthFactor >= WAD) revert AccountHealthy();
+        uint256 hf = _accountData(borrower).healthFactor;
+        if (hf >= WAD) revert AccountHealthy();
 
-        uint256 maxRepay = borrowBalance(debtAsset, borrower) * CLOSE_FACTOR_BPS / BPS;
+        uint256 closeFactor = hf < FULL_LIQUIDATION_HF ? BPS : CLOSE_FACTOR_BPS;
+        uint256 maxRepay = borrowBalance(debtAsset, borrower) * closeFactor / BPS;
         if (repayAmount > maxRepay) repayAmount = maxRepay;
         if (repayAmount == 0) revert ZeroAmount();
 
@@ -305,6 +343,9 @@ contract LendingPool {
         depositShares[collateralAsset][borrower] -= seizeShares;
         cm.totalDepositShares -= seizeShares;
         cm.totalDeposits -= seize;
+
+        // Залога не осталось совсем, а долг есть — он уже никогда не вернётся, списываем
+        if (_accountData(borrower).collateralValue == 0) _writeOffBadDebt(borrower);
 
         _safeTransfer(collateralAsset, msg.sender, seize);
         emit Liquidate(msg.sender, borrower, debtAsset, collateralAsset, repayAmount, seize);
@@ -401,6 +442,28 @@ contract LendingPool {
         _safeTransferFrom(asset, payer, address(this), amount);
         emit Repay(asset, payer, onBehalfOf, amount);
         return amount;
+    }
+
+    /// @dev Безнадёжный долг сначала покрывают резервы банка, остаток — вкладчики рынка
+    ///      (их вклады пропорционально уменьшаются). Свободные деньги пула при этом не меняются.
+    function _writeOffBadDebt(address user) private {
+        uint256 n = marketList.length;
+        for (uint256 i; i < n; ++i) {
+            address asset = marketList[i];
+            uint256 shares = borrowShares[asset][user];
+            if (shares == 0) continue;
+            Market storage m = markets[asset];
+            uint256 debt = borrowBalance(asset, user);
+            if (debt > m.totalBorrows) debt = m.totalBorrows; // округление вверх у последнего заёмщика
+
+            borrowShares[asset][user] = 0;
+            m.totalBorrowShares -= shares;
+            m.totalBorrows -= debt;
+            uint256 fromReserves = debt < m.reserves ? debt : m.reserves;
+            m.reserves -= fromReserves;
+            m.totalDeposits -= debt - fromReserves;
+            emit BadDebtWrittenOff(asset, user, debt, fromReserves);
+        }
     }
 
     function _accountData(address user) private view returns (AccountData memory a) {

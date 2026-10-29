@@ -11,6 +11,7 @@ const path = require("path");
 const { ethers } = require("ethers");
 
 const WAD = 10n ** 18n;
+const FULL_LIQUIDATION_HF = (95n * WAD) / 100n;
 const ORACLE_ABI = ["function getPrice(address) view returns (uint256)"];
 
 /**
@@ -73,7 +74,8 @@ function createBot({ signer, deployment, abis, log = console.log, autoMint = tru
       }
       if (!debt || !coll) continue;
 
-      const repay = debt.amount / 2n; // close factor 50%
+      // Как в контракте: 50% долга, а если HF ниже 0.95 — весь долг
+      const repay = acc.healthFactor < FULL_LIQUIDATION_HF ? debt.amount : debt.amount / 2n;
       const hf = Number(ethers.formatUnits(acc.healthFactor, 18)).toFixed(3);
       log(`Счёт ${borrower} под угрозой (HF ${hf}): гашу ${ethers.formatUnits(repay, debt.a.decimals)} ${debt.a.symbol}`);
       try {

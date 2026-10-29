@@ -60,6 +60,42 @@ test("симулятор: глубокая ликвидация забирает
   close(sim.depositBalance("WETH", "bob"), 0.4375, 1e-12, "осталось у Боба");
 });
 
+test("симулятор: полная ликвидация при HF < 0.95 и списание плохого долга совпадают с контрактом", async () => {
+  const { alice, bob, carol, usdc, weth, pool, oracle } = await setup();
+  const U = await usdc.getAddress();
+  const W = await weth.getAddress();
+  const num = (v, d) => Number(ethers.formatUnits(v, d));
+
+  for (const [price, label] of [[1_700, "HF 0.91: весь долг"], [1_000, "залога меньше долга: плохой долг"]]) {
+    // Контракт: каждый раз новый заёмщик — Боб, потом Кэрол
+    const [who, liq] = price === 1_700 ? [bob, carol] : [carol, bob];
+    await send(oracle.setPrice(W, ethers.parseUnits("2000", 18)));
+    if (price === 1_700) await send(pool.connect(alice).deposit(U, ethers.parseUnits("10000", 6)));
+    await send(pool.connect(who).deposit(W, ethers.parseUnits("1", 18)));
+    await send(pool.connect(who).borrow(U, ethers.parseUnits("1500", 6)));
+    await send(oracle.setPrice(W, ethers.parseUnits(String(price), 18)));
+    const aliceBefore = num(await pool.depositBalance(U, alice.address), 6);
+    const receipt = await send(pool.connect(liq).liquidate(who.address, U, W, ethers.MaxUint256));
+    const ev = receipt.logs.map((l) => { try { return pool.interface.parseLog(l); } catch { return null; } })
+      .find((e) => e && e.name === "Liquidate");
+    const aliceLoss = aliceBefore - num(await pool.depositBalance(U, alice.address), 6);
+
+    // Симулятор: тот же сценарий с нуля
+    const sim = emptySim();
+    sim.deposit("alice", "USDC", 10_000);
+    sim.deposit("bob", "WETH", 1);
+    sim.borrow("bob", "USDC", 1_500);
+    sim.setPrice("WETH", price);
+    const simAliceBefore = sim.depositBalance("USDC", "alice");
+    const r = sim.liquidate("carol", "bob", "USDC", "WETH", Infinity);
+
+    close(r.repaid, num(ev.args.repaid, 6), 1e-5, `${label}: погашено`);
+    close(r.seized, num(ev.args.seized, 18), 1e-9, `${label}: изъято`);
+    close(sim.borrowBalance("USDC", "bob"), num(await pool.borrowBalance(U, who.address), 6), 1e-5, `${label}: долг после`);
+    close(simAliceBefore - sim.depositBalance("USDC", "alice"), aliceLoss, 1e-5, `${label}: убыток вкладчика`);
+  }
+});
+
 test("симулятор: неудачная операция откатывается целиком", () => {
   const sim = emptySim();
   sim.deposit("alice", "USDC", 10_000);

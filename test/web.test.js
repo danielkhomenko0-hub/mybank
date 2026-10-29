@@ -156,6 +156,16 @@ test("кошелёк: банк разворачивается кнопкой н�
     },
     on: () => {},
   };
+  // В «Sepolia» страница подключает ETH к Chainlink — кладём поддельный фид по настоящему адресу
+  const FEED = "0x694AA1769357215DE4FAC081bf1f309aDC325306";
+  const signer = await new ethers.BrowserProvider(ethereum).getSigner();
+  const { abi, bytecode } = require("../build/MockPriceFeed.json");
+  const mock = await new ethers.ContractFactory(abi, bytecode, signer).deploy(8);
+  await mock.waitForDeployment();
+  await chain.request({ method: "evm_setAccountCode", params: [FEED, await signer.provider.getCode(await mock.getAddress())] });
+  await chain.request({ method: "evm_setAccountStorageAt", params: [FEED, ethers.toBeHex(0, 32), ethers.toBeHex(8, 32)] }); // decimals
+  await (await new ethers.Contract(FEED, abi, signer).set(234304000000n)).wait(); // $2343.04
+
   const { w, d } = load({ ethers, ethereum });
   await tick();
   click(w, d.getElementById("mode-wallet"));
@@ -167,7 +177,10 @@ test("кошелёк: банк разворачивается кнопкой н�
   const json = JSON.parse(d.getElementById("deploy-json").value);
   assert.equal(json.network, "sepolia");
   assert.equal(json.assets.length, 3);
+  assert.equal(json.feeds.WETH.feed, FEED);
   assert.ok(d.querySelector('[data-faucet="USDT"]'), "кран USDT");
   assert.match(text(d, "console"), /Вы владелец банка/);
+  assert.match(text(d, "console"), /Цена ETH сейчас от Chainlink/);
+  assert.ok(d.getElementById("pause"), "кнопка паузы у владельца");
   w.close();
 });

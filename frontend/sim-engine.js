@@ -23,6 +23,7 @@
   ];
 
   const CLOSE_FACTOR = 0.5;
+  const FULL_LIQUIDATION_HF = 0.95; // ниже — можно погасить весь долг, как в контракте
 
   // structuredClone есть не во всех браузерах; данные простые, так что JSON тоже подходит
   const clone = typeof structuredClone === "function" ? structuredClone : (o) => JSON.parse(JSON.stringify(o));
@@ -39,6 +40,12 @@
     TransferFailed: "Токены не перевелись — проверьте баланс кошелька.",
     WalletBalance: "На кошельке не хватает средств.",
     NoDebt: "По этому активу нет долга.",
+    Paused: "Банк на паузе: новые вклады и кредиты временно остановлены. Погасить долг и снять вклад можно.",
+    NotPendingOwner: "Принять банк может только адрес, которому его передают.",
+    StalePrice: "Цена от Chainlink устарела — операции с этим активом остановлены, пока фид не обновится.",
+    BadPrice: "Оракул вернул неверную цену.",
+    NoPrice: "Для этого актива не задана цена.",
+    InvalidFeed: "Этот фид Chainlink не подходит.",
   };
 
   class BankError extends Error {
@@ -323,10 +330,12 @@
 
     liquidate(liquidatorId, borrowerId, debtSym, collSym, repayAmount) {
       return this._tx(() => {
-        if (this.accountData(borrowerId).healthFactor >= 1) throw new BankError("AccountHealthy");
+        const hf = this.accountData(borrowerId).healthFactor;
+        if (hf >= 1) throw new BankError("AccountHealthy");
         const dm = this._market(debtSym);
         const cm = this._market(collSym);
-        const maxRepay = this.borrowBalance(debtSym, borrowerId) * CLOSE_FACTOR;
+        const closeFactor = hf < FULL_LIQUIDATION_HF ? 1 : CLOSE_FACTOR;
+        const maxRepay = this.borrowBalance(debtSym, borrowerId) * closeFactor;
         repayAmount = Math.min(Number(repayAmount), maxRepay);
         if (!(repayAmount > 0)) throw new BankError("ZeroAmount");
 
@@ -353,8 +362,33 @@
             `и забрал ${fmt(seize, collSym)} залога (прибыль ${usd(profit)}).`,
           "alert"
         );
-        return { repaid: repayAmount, seized: seize, profit };
+        const badDebt = this.accountData(borrowerId).collateralValue < 1e-9 ? this._writeOffBadDebt(borrowerId) : 0;
+        return { repaid: repayAmount, seized: seize, profit, badDebt };
       });
+    }
+
+    /** Как в контракте: безнадёжный долг гасят резервы банка, остаток — вкладчики рынка. Возвращает сумму в USD. */
+    _writeOffBadDebt(id) {
+      const u = this._user(id);
+      let total = 0;
+      for (const m of Object.values(this.markets)) {
+        const shares = u.bor[m.symbol];
+        if (shares <= 0) continue;
+        const debt = Math.min(this.borrowBalance(m.symbol, id), m.totalBorrows);
+        u.bor[m.symbol] = 0;
+        m.borrowShares -= shares;
+        m.totalBorrows -= debt;
+        const fromReserves = Math.min(debt, m.reserves);
+        m.reserves -= fromReserves;
+        m.totalDeposits -= debt - fromReserves;
+        total += debt * m.price;
+        this._note(
+          `У клиента «${u.name}» залог закончился, а долг ${fmt(debt, m.symbol)} остался. Банк списал его: ` +
+            `${fmt(fromReserves, m.symbol)} из резервов, ${fmt(debt - fromReserves, m.symbol)} — за счёт вкладчиков.`,
+          "alert"
+        );
+      }
+      return total;
     }
 
     /** Бот проходит по всем клиентам и ликвидирует тех, у кого health factor < 1. */
@@ -374,14 +408,6 @@
           if (!debt || debt.v <= 0 || !coll || coll.v <= 0) break;
           const r = this.liquidate(liquidatorId, id, debt.m.symbol, coll.m.symbol, Infinity);
           results.push({ user: this.users[id].name, ...r, debtSym: debt.m.symbol, collSym: coll.m.symbol });
-        }
-        const a = this.accountData(id);
-        if (a.debtValue > 0.01 && a.collateralValue < 0.01) {
-          this._note(
-            `У клиента «${this.users[id].name}» залог закончился, а долг ${usd(a.debtValue)} остался. ` +
-              "Это безнадёжный долг (bad debt) — его покрывают вкладчики.",
-            "alert"
-          );
         }
       }
       if (!results.length) this._note("Бот-ликвидатор проверил счета: все в порядке.", "info");
@@ -464,7 +490,7 @@
   }
 
   const api = {
-    SimBank, BankError, ERRORS_RU, MARKET_CONFIG, CLOSE_FACTOR, YEAR, DAY,
+    SimBank, BankError, ERRORS_RU, MARKET_CONFIG, CLOSE_FACTOR, FULL_LIQUIDATION_HF, YEAR, DAY,
     utilization, borrowRateAt, supplyRateAt, computeAccount, fmt, usd, pct,
   };
   root.MyBankSim = api;

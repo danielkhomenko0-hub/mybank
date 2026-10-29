@@ -42,6 +42,11 @@ const MARKETS = [
   },
 ];
 
+// Фиды Chainlink по сетям (как в frontend/chain-engine.js): в Sepolia цена ETH настоящая
+const CHAINLINK = {
+  11155111: { WETH: { feed: "0x694AA1769357215DE4FAC081bf1f309aDC325306", maxAge: 3 * 3600 } },
+};
+
 async function main() {
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
@@ -70,6 +75,7 @@ async function main() {
   const pool = await deploy("LendingPool", await oracle.getAddress());
 
   const assets = [];
+  const feeds = CHAINLINK[Number(chainId)] || {};
   for (const m of MARKETS) {
     const token = await deploy(m.contract || "TestToken", m.name, m.symbol, m.decimals);
     const addr = await token.getAddress();
@@ -80,6 +86,11 @@ async function main() {
       })
     );
     console.log(`  рынок ${m.symbol} открыт, цена $${m.price}`);
+    const f = feeds[m.symbol];
+    if (f) {
+      await tx(oracle.setFeed(addr, f.feed, f.maxAge, { nonce: nonce++ }));
+      console.log(`  цена ${m.symbol} теперь от Chainlink: $${ethers.formatUnits(await oracle.getPrice(addr), 18)}`);
+    }
     assets.push({ symbol: m.symbol, address: addr, decimals: m.decimals });
   }
 
@@ -92,6 +103,7 @@ async function main() {
     pool: await pool.getAddress(),
     oracle: await oracle.getAddress(),
     assets,
+    ...(Object.keys(feeds).length ? { feeds } : {}),
   };
   const dir = path.join(__dirname, "..", "deployments");
   fs.mkdirSync(dir, { recursive: true });
